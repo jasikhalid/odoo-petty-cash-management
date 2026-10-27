@@ -1,0 +1,1 @@
+# odoo-petty-cash-management
