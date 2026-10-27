@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Petty Cash Category Form View -->
+    <record id="view_petty_cash_category_form" model="ir.ui.view">
+        <field name="name">petty.cash.category.form</field>
+        <field name="model">petty.cash.category</field>
+        <field name="arch" type="xml">
+            <form string="Petty Cash Category">
+                <sheet>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <label for="name" string="Category Name"/>
+                        <h1>
+                            <field name="name" placeholder="e.g. Office Supplies"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Accounting Configuration">
+                            <field name="expense_account_id"/>
+                            <field name="tax_ids" widget="many2many_tags" options="{'no_create': True}"/>
+                            <field name="receipt_required"/>
+                        </group>
+                        <group string="Dimensions &amp; Scope">
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="analytic_account_id" groups="analytic.group_analytic_accounting"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Petty Cash Category List View -->
+    <record id="view_petty_cash_category_list" model="ir.ui.view">
+        <field name="name">petty.cash.category.list</field>
+        <field name="model">petty.cash.category</field>
+        <field name="arch" type="xml">
+            <list string="Petty Cash Categories">
+                <field name="name"/>
+                <field name="expense_account_id"/>
+                <field name="tax_ids" widget="many2many_tags"/>
+                <field name="receipt_required"/>
+                <field name="analytic_account_id" groups="analytic.group_analytic_accounting"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Petty Cash Category Search View -->
+    <record id="view_petty_cash_category_search" model="ir.ui.view">
+        <field name="name">petty.cash.category.search</field>
+        <field name="model">petty.cash.category</field>
+        <field name="arch" type="xml">
+            <search string="Search Petty Cash Categories">
+                <field name="name"/>
+                <field name="expense_account_id"/>
+                <separator/>
+                <filter name="inactive" string="Archived" domain="[('active', '=', False)]"/>
+                <group>
+                    <filter name="group_company" string="Company" context="{'group_by': 'company_id'}" groups="base.group_multi_company"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Petty Cash Category Window Action -->
+    <record id="action_petty_cash_category" model="ir.actions.act_window">
+        <field name="name">Petty Cash Categories</field>
+        <field name="res_model">petty.cash.category</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_petty_cash_category_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create a new Petty Cash Expense Category
+            </p>
+            <p>
+                Define categories for petty cash expenses with default expense accounts, taxes, and receipt requirements.
+            </p>
+        </field>
+    </record>
+</odoo>

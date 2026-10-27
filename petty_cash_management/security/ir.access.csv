@@ -1,0 +1,16 @@
+id,name,model_id,group_id/id,operation,domain
+rule_petty_cash_fund_company,Petty Cash Fund multi-company,petty.cash.fund,,crud,"[('company_id', 'in', company_ids)]"
+rule_petty_cash_category_company,Petty Cash Category multi-company,petty.cash.category,,crud,"[('company_id', 'in', company_ids)]"
+access_petty_cash_fund_custodian,Petty Cash Fund Custodian,petty.cash.fund,petty_cash_management.group_petty_cash_custodian,r,"[('custodian_ids', 'in', user.id)]"
+access_petty_cash_fund_manager,Petty Cash Fund Manager,petty.cash.fund,petty_cash_management.group_petty_cash_manager,crud,
+access_petty_cash_category_custodian,Petty Cash Category Custodian,petty.cash.category,petty_cash_management.group_petty_cash_custodian,r,
+access_petty_cash_category_manager,Petty Cash Category Manager,petty.cash.category,petty_cash_management.group_petty_cash_manager,crud,
+rule_petty_cash_voucher_company,Petty Cash Voucher multi-company,petty.cash.voucher,,crud,"[('company_id', 'in', company_ids)]"
+access_petty_cash_voucher_custodian,Petty Cash Voucher Custodian,petty.cash.voucher,petty_cash_management.group_petty_cash_custodian,crud,"[('fund_id.custodian_ids', 'in', user.id)]"
+access_petty_cash_voucher_manager,Petty Cash Voucher Manager,petty.cash.voucher,petty_cash_management.group_petty_cash_manager,crud,
+access_petty_cash_voucher_reason_wizard,Petty Cash Voucher Reason Wizard,petty.cash.voucher.reason.wizard,base.group_user,crud,
+rule_petty_cash_topup_source_company,Petty Cash Topup Source multi-company,petty.cash.topup.source,,crud,"[('company_id', 'in', company_ids)]"
+access_petty_cash_topup_source_manager,Petty Cash Topup Source Manager,petty.cash.topup.source,petty_cash_management.group_petty_cash_manager,crud,
+rule_petty_cash_topup_company,Petty Cash Topup multi-company,petty.cash.topup,,crud,"[('company_id', 'in', company_ids)]"
+access_petty_cash_topup_custodian,Petty Cash Topup Custodian,petty.cash.topup,petty_cash_management.group_petty_cash_custodian,r,"[('fund_id.custodian_ids', 'in', user.id)]"
+access_petty_cash_topup_manager,Petty Cash Topup Manager,petty.cash.topup,petty_cash_management.group_petty_cash_manager,crud,

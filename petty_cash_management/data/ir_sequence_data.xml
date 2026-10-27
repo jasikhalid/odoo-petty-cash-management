@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <record id="seq_petty_cash_voucher" model="ir.sequence">
+            <field name="name">Petty Cash Voucher</field>
+            <field name="code">petty.cash.voucher</field>
+            <field name="implementation">no_gap</field>
+            <field name="prefix">PCV/%(range_year)s/</field>
+            <field name="padding">5</field>
+            <field name="company_id" eval="False"/>
+            <field name="use_date_range" eval="True"/>
+        </record>
+        <record id="seq_petty_cash_topup" model="ir.sequence">
+            <field name="name">Petty Cash Top-up</field>
+            <field name="code">petty.cash.topup</field>
+            <field name="implementation">no_gap</field>
+            <field name="prefix">PCT/%(range_year)s/</field>
+            <field name="padding">5</field>
+            <field name="company_id" eval="False"/>
+            <field name="use_date_range" eval="True"/>
+        </record>
+    </data>
+</odoo>

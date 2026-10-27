@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Petty Cash Fund Form View -->
+    <record id="view_petty_cash_fund_form" model="ir.ui.view">
+        <field name="name">petty.cash.fund.form</field>
+        <field name="model">petty.cash.fund</field>
+        <field name="arch" type="xml">
+            <form string="Petty Cash Fund">
+                <header>
+                    <button name="action_activate"
+                            string="Activate"
+                            type="object"
+                            class="btn-primary"
+                            invisible="state != 'draft'"
+                            groups="petty_cash_management.group_petty_cash_manager"/>
+                    <button name="action_open_new_topup"
+                            string="Top Up"
+                            type="object"
+                            class="btn-primary"
+                            invisible="state != 'active'"
+                            groups="petty_cash_management.group_petty_cash_manager"/>
+                    <button name="action_close"
+                            string="Close Fund"
+                            type="object"
+                            class="btn-secondary"
+                            invisible="state != 'active'"
+                            groups="petty_cash_management.group_petty_cash_manager"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,active,closed"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_topups"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-arrow-circle-up">
+                            <field name="topup_count" widget="statinfo" string="Top-ups"/>
+                        </button>
+                        <button name="action_view_vouchers"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-file-text-o">
+                            <field name="voucher_count" widget="statinfo" string="Vouchers"/>
+                        </button>
+                        <button name="action_view_journal_items"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-bars"
+                                groups="account.group_account_readonly">
+                            <div class="o_stat_info">
+                                <span class="o_stat_text">Journal Items</span>
+                            </div>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <label for="name" string="Fund Name"/>
+                        <h1>
+                            <field name="name" placeholder="e.g. Head Office Petty Cash" readonly="state == 'closed'"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Fund Details">
+                            <field name="journal_id" readonly="state != 'draft'"/>
+                            <field name="company_id" readonly="state != 'draft'" groups="base.group_multi_company"/>
+                            <field name="currency_id" invisible="1"/>
+                            <field name="custodian_ids" widget="many2many_tags" options="{'no_create': True}" readonly="state == 'closed'"/>
+                            <field name="analytic_account_id" groups="analytic.group_analytic_accounting" readonly="state == 'closed'"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                        <group string="Balance &amp; Thresholds">
+                            <field name="balance" widget="monetary"/>
+                            <field name="low_balance_alert" readonly="state == 'closed'"/>
+                            <field name="per_voucher_limit" readonly="state == 'closed'"/>
+                            <field name="approval_threshold" readonly="state == 'closed'"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Journal Configuration" name="journal_config">
+                            <group>
+                                <group string="Liquidity &amp; Suspense">
+                                    <field name="default_account_id"/>
+                                    <field name="suspense_account_id"/>
+                                </group>
+                                <group string="Outstanding Accounts">
+                                    <field name="outstanding_receipt_account_id"/>
+                                    <field name="outstanding_payment_account_id"/>
+                                </group>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- Petty Cash Fund List View -->
+    <record id="view_petty_cash_fund_list" model="ir.ui.view">
+        <field name="name">petty.cash.fund.list</field>
+        <field name="model">petty.cash.fund</field>
+        <field name="arch" type="xml">
+            <list string="Petty Cash Funds" decoration-muted="state == 'closed'">
+                <field name="name"/>
+                <field name="journal_id"/>
+                <field name="custodian_ids" widget="many2many_tags"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+                <field name="balance" widget="monetary"/>
+                <field name="currency_id"/>
+                <field name="state" widget="badge"
+                       decoration-info="state == 'draft'"
+                       decoration-success="state == 'active'"
+                       decoration-muted="state == 'closed'"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Petty Cash Fund Search View -->
+    <record id="view_petty_cash_fund_search" model="ir.ui.view">
+        <field name="name">petty.cash.fund.search</field>
+        <field name="model">petty.cash.fund</field>
+        <field name="arch" type="xml">
+            <search string="Search Petty Cash Funds">
+                <field name="name"/>
+                <field name="journal_id"/>
+                <field name="custodian_ids"/>
+                <filter name="active_funds" string="Active" domain="[('state', '=', 'active')]"/>
+                <filter name="draft_funds" string="Draft" domain="[('state', '=', 'draft')]"/>
+                <filter name="low_balance" string="Low Balance" domain="[('is_low_balance', '=', True)]"/>
+                <separator/>
+                <filter name="inactive" string="Archived" domain="[('active', '=', False)]"/>
+                <group>
+                    <filter name="group_company" string="Company" context="{'group_by': 'company_id'}" groups="base.group_multi_company"/>
+                    <filter name="group_state" string="Status" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Petty Cash Fund Window Action -->
+    <record id="action_petty_cash_fund" model="ir.actions.act_window">
+        <field name="name">Petty Cash Funds</field>
+        <field name="res_model">petty.cash.fund</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_petty_cash_fund_search"/>
+        <field name="context">{'search_default_active_funds': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create a new Petty Cash Fund
+            </p>
+            <p>
+                Manage open-ended petty cash funds linked to real cash journals in your chart of accounts.
+            </p>
+        </field>
+    </record>
+</odoo>

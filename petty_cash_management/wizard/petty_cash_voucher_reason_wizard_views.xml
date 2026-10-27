@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_petty_cash_voucher_reason_wizard_form" model="ir.ui.view">
+        <field name="name">petty.cash.voucher.reason.wizard.form</field>
+        <field name="model">petty.cash.voucher.reason.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Provide Reason">
+                <sheet>
+                    <group>
+                        <field name="voucher_id" invisible="1"/>
+                        <field name="action_type" invisible="1"/>
+                        <field name="reason" placeholder="Enter reason here..." required="1"/>
+                    </group>
+                </sheet>
+                <footer>
+                    <button string="Confirm" type="object" name="action_confirm" class="btn-primary"/>
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

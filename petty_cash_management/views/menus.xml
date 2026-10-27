@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Root Menu -->
+    <menuitem id="menu_petty_cash_root"
+              name="Petty Cash"
+              sequence="45"
+              groups="petty_cash_management.group_petty_cash_custodian"/>
+
+    <!-- Funds Menu -->
+    <menuitem id="menu_petty_cash_fund"
+              name="Funds"
+              parent="menu_petty_cash_root"
+              action="action_petty_cash_fund"
+              sequence="10"/>
+
+    <!-- Vouchers Menu -->
+    <menuitem id="menu_petty_cash_voucher"
+              name="Vouchers"
+              parent="menu_petty_cash_root"
+              action="action_petty_cash_voucher"
+              sequence="20"/>
+
+    <!-- Top-ups Menu (Custodian and Manager) -->
+    <menuitem id="menu_petty_cash_topup"
+              name="Top-ups"
+              parent="menu_petty_cash_root"
+              action="action_petty_cash_topup"
+              sequence="25"/>
+
+    <!-- To Approve Menu (Approvers and Managers) -->
+    <menuitem id="menu_petty_cash_voucher_to_approve"
+              name="To Approve"
+              parent="menu_petty_cash_root"
+              action="action_petty_cash_voucher_to_approve"
+              sequence="30"
+              groups="petty_cash_management.group_petty_cash_approver"/>
+
+    <!-- Configuration Menu (Manager Only) -->
+    <menuitem id="menu_petty_cash_config"
+              name="Configuration"
+              parent="menu_petty_cash_root"
+              sequence="100"
+              groups="petty_cash_management.group_petty_cash_manager"/>
+
+    <!-- Categories Menu (Manager Only) -->
+    <menuitem id="menu_petty_cash_category"
+              name="Categories"
+              parent="menu_petty_cash_config"
+              action="action_petty_cash_category"
+              sequence="10"
+              groups="petty_cash_management.group_petty_cash_manager"/>
+
+    <!-- Top-up Sources Menu (Manager Only) -->
+    <menuitem id="menu_petty_cash_topup_source"
+              name="Top-up Sources"
+              parent="menu_petty_cash_config"
+              action="action_petty_cash_topup_source"
+              sequence="20"
+              groups="petty_cash_management.group_petty_cash_manager"/>
+</odoo>
