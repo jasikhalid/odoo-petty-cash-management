@@ -2,6 +2,19 @@ from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
 
 
+FUND_CONTROL_FIELDS = {
+    'custodian_ids',
+    'journal_id',
+    'company_id',
+    'approval_threshold',
+    'per_voucher_limit',
+    'state',
+    'low_balance_alert',
+    'analytic_account_id',
+    'active',
+}
+
+
 class PettyCashFund(models.Model):
     _name = 'petty.cash.fund'
     _description = 'Petty Cash Fund'
@@ -10,6 +23,7 @@ class PettyCashFund(models.Model):
     _check_company_auto = True
 
     name = fields.Char(string='Fund Name', required=True, tracking=True)
+    notes = fields.Text(string='Notes')
     active = fields.Boolean(default=True)
     state = fields.Selection([
         ('draft', 'Draft'),
@@ -93,14 +107,14 @@ class PettyCashFund(models.Model):
         search='_search_is_low_balance',
     )
     per_voucher_limit = fields.Monetary(
-        string='Per Voucher Limit',
+        string='Per-Expense Limit',
         currency_field='currency_id',
-        help="Maximum single voucher payout limit (enforced in Phase 2).",
+        help="Maximum single expense payout limit.",
     )
     approval_threshold = fields.Monetary(
         string='Approval Threshold',
         currency_field='currency_id',
-        help="Vouchers above this amount require approver sign-off (enforced in Phase 3).",
+        help="Expenses above this amount require manager approval.",
     )
     analytic_account_id = fields.Many2one(
         comodel_name='account.analytic.account',
@@ -108,7 +122,7 @@ class PettyCashFund(models.Model):
         check_company=True,
     )
     voucher_count = fields.Integer(
-        string='Vouchers',
+        string='Expenses',
         compute='_compute_voucher_count',
     )
     topup_ids = fields.One2many(
@@ -180,25 +194,23 @@ class PettyCashFund(models.Model):
             fund.balance = balance_map.get(key, 0.0)
 
     def _search_balance(self, operator, value):
-        valid_operators = ('<', '<=', '>', '>=', '=', '!=')
-        if operator not in valid_operators:
+        import operator as py_op
+        op_map = {
+            '<': py_op.lt,
+            '<=': py_op.le,
+            '>': py_op.gt,
+            '>=': py_op.ge,
+            '=': lambda b, v, f: f.currency_id.is_zero(b - v),
+            '!=': lambda b, v, f: not f.currency_id.is_zero(b - v),
+        }
+        if operator not in op_map:
             raise UserError(_("Unsupported search operator '%s' for balance.", operator))
-
+        comp = op_map[operator]
         funds = self.search([])
-        matched_ids = []
-        for fund in funds:
-            if operator == '<' and fund.balance < value:
-                matched_ids.append(fund.id)
-            elif operator == '<=' and fund.balance <= value:
-                matched_ids.append(fund.id)
-            elif operator == '>' and fund.balance > value:
-                matched_ids.append(fund.id)
-            elif operator == '>=' and fund.balance >= value:
-                matched_ids.append(fund.id)
-            elif operator == '=' and fund.currency_id.is_zero(fund.balance - value):
-                matched_ids.append(fund.id)
-            elif operator == '!=' and not fund.currency_id.is_zero(fund.balance - value):
-                matched_ids.append(fund.id)
+        if operator in ('=', '!='):
+            matched_ids = [f.id for f in funds if comp(f.balance, value, f)]
+        else:
+            matched_ids = [f.id for f in funds if comp(f.balance, value)]
         return [('id', 'in', matched_ids)]
 
     @api.depends('balance', 'low_balance_alert', 'state')
@@ -228,6 +240,14 @@ class PettyCashFund(models.Model):
                 raise UserError(_("Only draft petty cash funds can be deleted. Archive the fund instead."))
 
     def write(self, vals):
+        if not self.env.user.has_group('petty_cash_management.group_petty_cash_manager'):
+            control_fields_modified = set(vals.keys()) & FUND_CONTROL_FIELDS
+            if control_fields_modified:
+                raise UserError(_(
+                    "Custodians cannot modify control fields on a petty cash fund (attempted to modify: %s).",
+                    ", ".join(sorted(control_fields_modified)),
+                ))
+
         # Lock journal_id and company_id once active or closed
         if ('journal_id' in vals or 'company_id' in vals) and any(fund.state != 'draft' for fund in self):
             raise UserError(_("You cannot change the journal or company of an active or closed petty cash fund."))
@@ -240,6 +260,8 @@ class PettyCashFund(models.Model):
 
     def action_activate(self):
         self.ensure_one()
+        if not self.env.user.has_group('petty_cash_management.group_petty_cash_manager'):
+            raise UserError(_("Only a Petty Cash Manager can activate a fund."))
         errors = []
 
         if not self.custodian_ids:
@@ -294,12 +316,14 @@ class PettyCashFund(models.Model):
 
     def action_close(self):
         self.ensure_one()
+        if not self.env.user.has_group('petty_cash_management.group_petty_cash_manager'):
+            raise UserError(_("Only a Petty Cash Manager can close a fund."))
         open_vouchers = self.env['petty.cash.voucher'].search_count([
             ('fund_id', '=', self.id),
             ('state', 'in', ('draft', 'submitted')),
         ])
         if open_vouchers:
-            raise UserError(_("Cannot close a fund with draft or submitted vouchers. Please cancel or process them first."))
+            raise UserError(_("Cannot close a fund with draft or submitted expenses. Please cancel or process them first."))
         if not self.currency_id.is_zero(self.balance):
             raise UserError(_(
                 "A petty cash fund can only be closed when its balance is zero. Current balance is %(balance)s.",
@@ -310,7 +334,7 @@ class PettyCashFund(models.Model):
     def action_view_vouchers(self):
         self.ensure_one()
         return {
-            'name': _("Vouchers: %s", self.name),
+            'name': _("Expenses: %s", self.name),
             'type': 'ir.actions.act_window',
             'res_model': 'petty.cash.voucher',
             'view_mode': 'list,form',

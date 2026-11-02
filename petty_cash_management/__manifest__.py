@@ -7,13 +7,14 @@
 Petty Cash Management with direct General Ledger integration.
 Connects petty cash funds directly to Odoo Cash Journals, ensuring real-time balance
 accuracy without shadow ledgers or balance drift. Supports branch fund administration,
-voucher disbursement, multi-level approvals, receipt verification, and fund top-ups.
+expense disbursement, multi-level approvals, receipt verification, and fund top-ups.
     """,
     'author': 'Jasi Khalid',
     'license': 'LGPL-3',
     'depends': [
         'account',
         'account_accountant',
+        'accountant',
         'hr',
         'mail',
     ],

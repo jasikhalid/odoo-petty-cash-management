@@ -4,9 +4,9 @@ from odoo.exceptions import UserError
 
 class PettyCashVoucherReasonWizard(models.TransientModel):
     _name = 'petty.cash.voucher.reason.wizard'
-    _description = 'Petty Cash Voucher Reason Wizard'
+    _description = 'Petty Cash Expense Reason Wizard'
 
-    voucher_id = fields.Many2one('petty.cash.voucher', string='Voucher', required=True, readonly=True)
+    voucher_id = fields.Many2one('petty.cash.voucher', string='Expense', required=True, readonly=True)
     action_type = fields.Selection([
         ('reject', 'Reject'),
         ('cancel', 'Cancel'),

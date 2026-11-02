@@ -26,7 +26,7 @@
                         <button name="action_view_journal_entry"
                                 type="object"
                                 class="oe_stat_button"
-                                icon="fa-bars"
+                                icon="menu"
                                 invisible="not move_id"
                                 groups="account.group_account_readonly">
                             <div class="o_stat_info">

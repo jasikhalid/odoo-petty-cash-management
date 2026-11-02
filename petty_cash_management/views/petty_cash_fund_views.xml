@@ -32,19 +32,19 @@
                         <button name="action_view_topups"
                                 type="object"
                                 class="oe_stat_button"
-                                icon="fa-arrow-circle-up">
+                                icon="arrow_circle_up">
                             <field name="topup_count" widget="statinfo" string="Top-ups"/>
                         </button>
                         <button name="action_view_vouchers"
                                 type="object"
                                 class="oe_stat_button"
-                                icon="fa-file-text-o">
-                            <field name="voucher_count" widget="statinfo" string="Vouchers"/>
+                                icon="article">
+                            <field name="voucher_count" widget="statinfo" string="Expenses"/>
                         </button>
                         <button name="action_view_journal_items"
                                 type="object"
                                 class="oe_stat_button"
-                                icon="fa-bars"
+                                icon="menu"
                                 groups="account.group_account_readonly">
                             <div class="o_stat_info">
                                 <span class="o_stat_text">Journal Items</span>
@@ -86,6 +86,9 @@
                                     <field name="outstanding_payment_account_id"/>
                                 </group>
                             </group>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="notes" placeholder="Internal notes regarding this petty cash fund..."/>
                         </page>
                     </notebook>
                 </sheet>

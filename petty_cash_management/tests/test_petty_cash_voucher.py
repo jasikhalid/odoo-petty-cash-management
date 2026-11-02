@@ -1,84 +1,27 @@
+import base64
 from datetime import date, timedelta
 from unittest.mock import patch
-import psycopg2
 
 from odoo import Command, fields
-from odoo.exceptions import AccessError, LockError, UserError, ValidationError
+from odoo.exceptions import AccessError, LockError, UserError
 from odoo.tests import Form, tagged, new_test_user
 from odoo.tools.safe_eval import safe_eval
 from odoo.tools.misc import formatLang
 from odoo.tools import mute_logger
-from odoo.addons.account.tests.common import AccountTestInvoicingCommon
+from .common import PettyCashTestCommon
 
 
 @tagged('post_install', '-at_install')
-class TestPettyCashVoucher(AccountTestInvoicingCommon):
+class TestPettyCashVoucher(PettyCashTestCommon):
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-
-        # Grant Petty Cash Manager and HR Officer groups to test runner user
-        cls.env.user.write({
-            'group_ids': [
-                Command.link(cls.env.ref('petty_cash_management.group_petty_cash_manager').id),
-                Command.link(cls.env.ref('hr.group_hr_user').id),
-            ],
+        cls.manager_user.write({
+            'group_ids': [Command.link(cls.env.ref('account.group_account_invoice').id)],
         })
 
-        cls.company = cls.env.company
-        cls.currency = cls.company.currency_id
-
-
-        # Accounts for cash journal
-        cls.petty_cash_account = cls.env['account.account'].create({
-            'name': 'Petty Cash Liquidity',
-            'code': '101090',
-            'account_type': 'asset_cash',
-            'company_ids': [Command.link(cls.company.id)],
-        })
-        cls.suspense_account = cls.env['account.account'].create({
-            'name': 'Petty Cash Suspense',
-            'code': '101091',
-            'account_type': 'asset_current',
-            'company_ids': [Command.link(cls.company.id)],
-        })
-        cls.outstanding_receipts_account = cls.env['account.account'].create({
-            'name': 'Petty Cash Out Receipts',
-            'code': '101092',
-            'account_type': 'asset_current',
-            'company_ids': [Command.link(cls.company.id)],
-        })
-        cls.outstanding_payments_account = cls.env['account.account'].create({
-            'name': 'Petty Cash Out Payments',
-            'code': '101093',
-            'account_type': 'asset_current',
-            'company_ids': [Command.link(cls.company.id)],
-        })
-
-        # Cash journal
-        cls.journal = cls.env['account.journal'].create({
-            'name': 'Petty Cash Journal',
-            'code': 'PCV1',
-            'type': 'cash',
-            'company_id': cls.company.id,
-            'default_account_id': cls.petty_cash_account.id,
-            'suspense_account_id': cls.suspense_account.id,
-            'inbound_payment_method_line_ids': [
-                Command.create({
-                    'payment_method_id': cls.env.ref('account.account_payment_method_manual_in').id,
-                    'payment_account_id': cls.outstanding_receipts_account.id,
-                }),
-            ],
-            'outbound_payment_method_line_ids': [
-                Command.create({
-                    'payment_method_id': cls.env.ref('account.account_payment_method_manual_out').id,
-                    'payment_account_id': cls.outstanding_payments_account.id,
-                }),
-            ],
-        })
-
-        # Expense account & Category
+        # Expense account & Categories
         cls.expense_account = cls.env['account.account'].create({
             'name': 'General Office Expense',
             'code': '600090',
@@ -98,15 +41,7 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
             'receipt_required': True,
         })
 
-        # Users
-        cls.custodian_user = new_test_user(
-            cls.env,
-            login='voucher_custodian',
-            name='Voucher Custodian',
-            groups='petty_cash_management.group_petty_cash_custodian',
-            company_id=cls.company.id,
-            company_ids=[Command.set(cls.company.ids)],
-        )
+        # Additional Users
         cls.custodian_user_2 = new_test_user(
             cls.env,
             login='voucher_custodian_2',
@@ -115,18 +50,10 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
             company_id=cls.company.id,
             company_ids=[Command.set(cls.company.ids)],
         )
-        cls.approver_user = new_test_user(
+        cls.manager_2_user = new_test_user(
             cls.env,
-            login='voucher_approver',
-            name='Voucher Approver',
-            groups='petty_cash_management.group_petty_cash_approver',
-            company_id=cls.company.id,
-            company_ids=[Command.set(cls.company.ids)],
-        )
-        cls.manager_user = new_test_user(
-            cls.env,
-            login='voucher_manager',
-            name='Voucher Manager',
+            login='voucher_manager_2',
+            name='Voucher Manager 2',
             groups='petty_cash_management.group_petty_cash_manager,account.group_account_invoice',
             company_id=cls.company.id,
             company_ids=[Command.set(cls.company.ids)],
@@ -144,7 +71,7 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
         cls.fund = cls.env['petty.cash.fund'].create({
             'name': 'Main Branch Fund',
             'journal_id': cls.journal.id,
-            'custodian_ids': [Command.set([cls.custodian_user.id, cls.approver_user.id])],
+            'custodian_ids': [Command.set([cls.custodian_user.id])],
             'company_id': cls.company.id,
             'approval_threshold': 100.0,
             'per_voucher_limit': 500.0,
@@ -234,8 +161,8 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
         self.fund.invalidate_recordset(['balance'])
         self.assertEqual(self.fund.balance, initial_balance - 50.0)
 
-    def test_02_above_threshold_requires_approver(self):
-        """Above threshold: stays submitted, custodian cannot approve, approver approves -> posted."""
+    def test_02_above_threshold_requires_manager_approval(self):
+        """Above threshold: stays submitted, custodian cannot approve, manager approves -> posted."""
         voucher = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
             'fund_id': self.fund.id,
             'category_id': self.category.id,
@@ -251,19 +178,19 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
         with self.assertRaises(UserError):
             voucher.with_user(self.custodian_user).action_approve()
 
-        # Approver approves
-        voucher.with_user(self.approver_user).action_approve()
+        # Manager approves
+        voucher.with_user(self.manager_user).action_approve()
         self.assertEqual(voucher.state, 'posted')
-        self.assertEqual(voucher.approved_by_id, self.approver_user)
+        self.assertEqual(voucher.approved_by_id, self.manager_user)
         self.assertTrue(voucher.approved_date)
 
     def test_03_segregation_of_duties_creator_and_payee_cannot_approve(self):
         """Creator cannot approve own voucher; employee payee cannot approve own voucher."""
-        # 1. Approver creates a voucher above threshold
-        voucher = self.env['petty.cash.voucher'].with_user(self.approver_user).create({
+        # 1. Manager creates a voucher above threshold
+        voucher = self.env['petty.cash.voucher'].with_user(self.manager_user).create({
             'fund_id': self.fund.id,
             'category_id': self.category.id,
-            'description': 'Approver Created Voucher',
+            'description': 'Manager Created Voucher',
             'amount': 120.0,
             'payee_type': 'partner',
             'partner_id': self.partner.id,
@@ -271,15 +198,20 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
         voucher.action_submit()
         self.assertEqual(voucher.state, 'submitted')
 
-        # Approver tries to approve their own voucher: BLOCKED
+        # Manager tries to approve their own voucher: BLOCKED
         with self.assertRaises(UserError) as cm:
-            voucher.with_user(self.approver_user).action_approve()
+            voucher.with_user(self.manager_user).action_approve()
         self.assertIn("Segregation of duties", str(cm.exception))
+
+        # Another manager approves: SUCCEEDS
+        voucher.with_user(self.manager_2_user).action_approve()
+        self.assertEqual(voucher.state, 'posted')
+        self.assertEqual(voucher.approved_by_id, self.manager_2_user)
 
         # 2. Voucher where payee employee is linked to the user
         self.fund.write({'custodian_ids': [Command.link(self.employee_user.id)]})
-        # Grant approver rights to employee_user
-        self.employee_user.write({'group_ids': [Command.link(self.env.ref('petty_cash_management.group_petty_cash_approver').id)]})
+        # Grant manager rights to employee_user
+        self.employee_user.write({'group_ids': [Command.link(self.env.ref('petty_cash_management.group_petty_cash_manager').id)]})
 
         voucher2 = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
             'fund_id': self.fund.id,
@@ -313,8 +245,8 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
         with self.assertRaises(UserError):
             voucher.with_user(self.custodian_user).action_reset_to_draft()
 
-        # Approver rejects with reason
-        wizard = self.env['petty.cash.voucher.reason.wizard'].with_user(self.approver_user).create({
+        # Manager rejects with reason
+        wizard = self.env['petty.cash.voucher.reason.wizard'].with_user(self.manager_user).create({
             'voucher_id': voucher.id,
             'action_type': 'reject',
             'reason': 'Invoice quotation missing breakdown.',
@@ -334,10 +266,10 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
         self.assertEqual(voucher.state, 'posted')
 
     def test_05_receipt_rules_and_per_voucher_limit(self):
-        """Receipt required category requires attachment; other payee without receipt requirement submits cleanly; per_voucher_limit hard stop."""
-        expected_msg = f"A receipt attachment is required for category '{self.category_receipt_req.name}'. Attach the receipt, or ask a Manager to untick 'Receipt Required' on the category."
+        """Receipt required category requires receipt_file; other payee without receipt requirement submits cleanly; per_voucher_limit hard stop."""
+        expected_msg = f"A receipt is required for category '{self.category_receipt_req.name}'. Upload the receipt, or ask a Manager to untick 'Receipt Required' on the category."
 
-        # 1. Partner payee, category receipt_required=True, no attachment: blocked
+        # 1. Partner payee, category receipt_required=True, no receipt: blocked
         voucher = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
             'fund_id': self.fund.id,
             'category_id': self.category_receipt_req.id,
@@ -350,14 +282,11 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
             voucher.action_submit()
         self.assertEqual(str(cm.exception), expected_msg)
 
-        # Add attachment -> submit succeeds
-        self.env['ir.attachment'].create({
-            'name': 'taxi_bill.pdf',
-            'res_model': 'petty.cash.voucher',
-            'res_id': voucher.id,
-            'raw': b'fake receipt content',
+        # Upload receipt in draft -> submit succeeds
+        voucher.write({
+            'receipt_file': base64.b64encode(b'fake receipt content').decode('utf-8'),
+            'receipt_filename': 'taxi_bill.pdf',
         })
-        voucher.invalidate_recordset(['attachment_count'])
         voucher.action_submit()
         self.assertEqual(voucher.state, 'posted')
 
@@ -397,7 +326,7 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
         })
         with self.assertRaises(UserError) as cm:
             voucher_high.action_submit()
-        self.assertIn("exceeds the fund's per-voucher limit", str(cm.exception))
+        self.assertIn("exceeds the fund's per-expense limit", str(cm.exception))
 
     def test_06_payee_types_and_lines_formatting(self):
         """Payee types: partner, employee (work_contact_id), other (no partner on lines, name in label)."""
@@ -448,15 +377,9 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
             'amount': 10.0,
             'payee_type': 'other',
             'payee_name': 'Express Couriers',
+            'receipt_file': base64.b64encode(b'slip image').decode('utf-8'),
+            'receipt_filename': 'courier_slip.jpg',
         })
-        # Add receipt
-        self.env['ir.attachment'].create({
-            'name': 'courier_slip.jpg',
-            'res_model': 'petty.cash.voucher',
-            'res_id': v_other.id,
-            'raw': b'slip image',
-        })
-        v_other.invalidate_recordset(['attachment_count'])
         v_other.action_submit()
 
         # Assert no partner on lines, name in label
@@ -703,10 +626,11 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
         })
         with self.assertRaises(UserError) as cm:
             self.fund.with_user(self.manager_user).action_close()
-        self.assertIn("Cannot close a fund with draft or submitted vouchers", str(cm.exception))
+        self.assertIn("Cannot close a fund with draft or submitted expenses", str(cm.exception))
 
-    def test_15_receipt_attachments_immutability(self):
-        """Attachments on submitted or posted vouchers cannot be deleted or modified."""
+    def test_15_receipt_field_immutability(self):
+        """Receipt fields can be written in draft, but after submit or post, writing raises UserError."""
+        # 1. In draft: writing receipt_file and receipt_filename succeeds
         voucher = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
             'fund_id': self.fund.id,
             'category_id': self.category_receipt_req.id,
@@ -714,47 +638,49 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
             'amount': 50.0,
             'payee_type': 'partner',
             'partner_id': self.partner.id,
+            'receipt_file': base64.b64encode(b'initial receipt').decode('utf-8'),
+            'receipt_filename': 'receipt.png',
         })
-        attachment = self.env['ir.attachment'].create({
-            'name': 'receipt.png',
-            'res_model': 'petty.cash.voucher',
-            'res_id': voucher.id,
-            'raw': b'receipt content',
+        self.assertEqual(voucher.state, 'draft')
+        voucher.write({
+            'receipt_file': base64.b64encode(b'updated receipt').decode('utf-8'),
+            'receipt_filename': 'receipt_v2.png',
         })
+        self.assertEqual(voucher.receipt_filename, 'receipt_v2.png')
+
+        # 2. After post (below threshold): writing raises UserError
         voucher.action_submit()
         self.assertEqual(voucher.state, 'posted')
 
-        # Attempt to unlink attachment: BLOCKED
         with self.assertRaises(UserError) as cm:
-            attachment.unlink()
-        self.assertIn("Receipt attachments cannot be modified or deleted", str(cm.exception))
+            voucher.write({'receipt_file': base64.b64encode(b'tampered content').decode('utf-8')})
+        self.assertIn("Cannot modify details of an expense that is not in draft state", str(cm.exception))
 
-        # Attempt to replace attachment binary content: BLOCKED
         with self.assertRaises(UserError) as cm:
-            attachment.write({'raw': b'tampered content'})
-        self.assertIn("Receipt attachments cannot be modified or deleted", str(cm.exception))
+            voucher.write({'receipt_filename': 'tampered.png'})
+        self.assertIn("Cannot modify details of an expense that is not in draft state", str(cm.exception))
 
-        # Attempt to move attachment to another voucher: BLOCKED
-        voucher_other = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
+        # 3. After submit (above threshold): writing raises UserError
+        voucher_sub = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
             'fund_id': self.fund.id,
-            'category_id': self.category.id,
-            'description': 'Other Voucher',
-            'amount': 10.0,
+            'category_id': self.category_receipt_req.id,
+            'description': 'Big Expense',
+            'amount': 150.0,  # threshold is 100.0
             'payee_type': 'partner',
             'partner_id': self.partner.id,
+            'receipt_file': base64.b64encode(b'big expense receipt').decode('utf-8'),
+            'receipt_filename': 'big_receipt.pdf',
         })
-        with self.assertRaises(UserError) as cm:
-            attachment.write({'res_id': voucher_other.id})
-        self.assertIn("Receipt attachments cannot be modified or deleted", str(cm.exception))
+        voucher_sub.action_submit()
+        self.assertEqual(voucher_sub.state, 'submitted')
 
-        # Adding a NEW attachment to a posted voucher is ALLOWED
-        new_att = self.env['ir.attachment'].create({
-            'name': 'additional_note.pdf',
-            'res_model': 'petty.cash.voucher',
-            'res_id': voucher.id,
-            'raw': b'additional notes',
-        })
-        self.assertTrue(new_att.id)
+        with self.assertRaises(UserError) as cm:
+            voucher_sub.write({'receipt_file': base64.b64encode(b'tampered submit content').decode('utf-8')})
+        self.assertIn("Cannot modify details of an expense that is not in draft state", str(cm.exception))
+
+        with self.assertRaises(UserError) as cm:
+            voucher_sub.write({'receipt_filename': 'tampered_sub.pdf'})
+        self.assertIn("Cannot modify details of an expense that is not in draft state", str(cm.exception))
 
     def test_16_custodian_only_user_creates_and_submits_employee_voucher(self):
         """Custodian-only user (no HR rights) picks hr.employee via name_search, reads work contact, and submits."""
@@ -815,7 +741,7 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
             ('reversal_move_id', dummy_move.id),
             ('submitted_by_id', self.custodian_user.id),
             ('submitted_date', fields.Datetime.now()),
-            ('approved_by_id', self.approver_user.id),
+            ('approved_by_id', self.manager_user.id),
             ('approved_date', fields.Datetime.now()),
             ('rejection_reason', 'Unauthorized edit'),
             ('cancel_reason', 'Unauthorized edit'),
@@ -832,7 +758,7 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
             ('reversal_move_id', dummy_move.id),
             ('submitted_by_id', self.custodian_user.id),
             ('submitted_date', fields.Datetime.now()),
-            ('approved_by_id', self.approver_user.id),
+            ('approved_by_id', self.manager_user.id),
             ('approved_date', fields.Datetime.now()),
             ('rejection_reason', 'Unauthorized edit'),
             ('cancel_reason', 'Unauthorized edit'),
@@ -1216,3 +1142,100 @@ class TestPettyCashVoucher(AccountTestInvoicingCommon):
         expected_amt = formatLang(self.env, current_bal + 500.0, currency_obj=self.fund.currency_id)
         self.assertIn(expected_bal, err_msg)
         self.assertIn(expected_amt, err_msg)
+
+    def test_27_receipt_rules_access_and_duplication(self):
+        """Verify:
+        - category receipt_required=False, no receipt, any payee type incl. free text: submits and posts
+        - category receipt_required=True, no receipt: blocked with the new message
+        - category receipt_required=True, receipt uploaded: submits
+        - custodian-only user (no accounting group) uploads a receipt in draft, submits, then reads receipt_file back without AccessError
+        - a Manager can read the receipt of a submitted voucher
+        - duplicating a voucher does not copy the receipt
+        """
+        # (a) category receipt_required=False, no receipt, any payee type (partner, employee, other): submits and posts
+        for p_type, p_vals in [
+            ('partner', {'partner_id': self.partner.id}),
+            ('employee', {'employee_id': self.employee.id}),
+            ('other', {'payee_name': 'Corner Store'}),
+        ]:
+            v_noreq = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
+                'fund_id': self.fund.id,
+                'category_id': self.category.id,  # receipt_required=False
+                'description': f'Expense without receipt - {p_type}',
+                'amount': 15.0,
+                'payee_type': p_type,
+                **p_vals,
+            })
+            v_noreq.action_submit()
+            self.assertEqual(v_noreq.state, 'posted')
+
+        # (b) category receipt_required=True, no receipt: blocked with new message
+        expected_msg = f"A receipt is required for category '{self.category_receipt_req.name}'. Upload the receipt, or ask a Manager to untick 'Receipt Required' on the category."
+        v_blocked = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
+            'fund_id': self.fund.id,
+            'category_id': self.category_receipt_req.id,
+            'description': 'Mandatory receipt missing',
+            'amount': 20.0,
+            'payee_type': 'partner',
+            'partner_id': self.partner.id,
+        })
+        with self.assertRaises(UserError) as cm:
+            v_blocked.action_submit()
+        self.assertEqual(str(cm.exception), expected_msg)
+
+        # (c) category receipt_required=True, receipt uploaded: submits
+        receipt_bytes = b'sample receipt image or pdf content'
+        v_blocked.write({
+            'receipt_file': base64.b64encode(receipt_bytes).decode('utf-8'),
+            'receipt_filename': 'sample_receipt.pdf',
+        })
+        v_blocked.action_submit()
+        self.assertEqual(v_blocked.state, 'posted')
+
+        # (d) custodian-only user (no accounting group) uploads a receipt in draft, submits, then reads receipt_file back without AccessError
+        self.assertFalse(self.custodian_user.has_group('account.group_account_readonly'))
+        self.assertFalse(self.custodian_user.has_group('account.group_account_invoice'))
+        v_cust = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
+            'fund_id': self.fund.id,
+            'category_id': self.category_receipt_req.id,
+            'description': 'Custodian receipt voucher',
+            'amount': 30.0,
+            'payee_type': 'partner',
+            'partner_id': self.partner.id,
+            'receipt_file': base64.b64encode(b'custodian receipt content').decode('utf-8'),
+            'receipt_filename': 'cust_receipt.jpg',
+        })
+        v_cust.action_submit()
+        self.assertEqual(v_cust.state, 'posted')
+        read_file = v_cust.with_user(self.custodian_user).receipt_file
+        read_filename = v_cust.with_user(self.custodian_user).receipt_filename
+        self.assertEqual(bytes(read_file), b'custodian receipt content')
+        self.assertEqual(read_filename, 'cust_receipt.jpg')
+
+        # (e) A Manager can read the receipt of a submitted voucher
+        v_submitted = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
+            'fund_id': self.fund.id,
+            'category_id': self.category_receipt_req.id,
+            'description': 'Submitted voucher with receipt',
+            'amount': 120.0,  # > threshold (100.0)
+            'payee_type': 'partner',
+            'partner_id': self.partner.id,
+            'receipt_file': base64.b64encode(b'approval receipt data').decode('utf-8'),
+            'receipt_filename': 'approval_doc.png',
+        })
+        v_submitted.action_submit()
+        self.assertEqual(v_submitted.state, 'submitted')
+
+        manager_read_file = v_submitted.with_user(self.manager_user).receipt_file
+        self.assertEqual(bytes(manager_read_file), b'approval receipt data')
+        self.assertEqual(v_submitted.with_user(self.manager_user).receipt_filename, 'approval_doc.png')
+
+        manager_2_read_file = v_submitted.with_user(self.manager_2_user).receipt_file
+        self.assertEqual(bytes(manager_2_read_file), b'approval receipt data')
+        self.assertEqual(v_submitted.with_user(self.manager_2_user).receipt_filename, 'approval_doc.png')
+
+        # (f) Duplicating a voucher does not copy the receipt
+        v_copy = v_submitted.with_user(self.custodian_user).copy()
+        self.assertEqual(v_copy.state, 'draft')
+        self.assertFalse(v_copy.receipt_file)
+        self.assertFalse(v_copy.receipt_filename)

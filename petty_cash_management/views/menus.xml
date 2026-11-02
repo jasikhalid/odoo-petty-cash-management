@@ -4,6 +4,7 @@
     <menuitem id="menu_petty_cash_root"
               name="Petty Cash"
               sequence="45"
+              web_icon="petty_cash_management,static/description/icon.png"
               groups="petty_cash_management.group_petty_cash_custodian"/>
 
     <!-- Funds Menu -->
@@ -13,9 +14,9 @@
               action="action_petty_cash_fund"
               sequence="10"/>
 
-    <!-- Vouchers Menu -->
+    <!-- Expenses Menu -->
     <menuitem id="menu_petty_cash_voucher"
-              name="Vouchers"
+              name="Expenses"
               parent="menu_petty_cash_root"
               action="action_petty_cash_voucher"
               sequence="20"/>
@@ -27,13 +28,13 @@
               action="action_petty_cash_topup"
               sequence="25"/>
 
-    <!-- To Approve Menu (Approvers and Managers) -->
+    <!-- To Approve Menu (Manager Only) -->
     <menuitem id="menu_petty_cash_voucher_to_approve"
               name="To Approve"
               parent="menu_petty_cash_root"
               action="action_petty_cash_voucher_to_approve"
               sequence="30"
-              groups="petty_cash_management.group_petty_cash_approver"/>
+              groups="petty_cash_management.group_petty_cash_manager"/>
 
     <!-- Configuration Menu (Manager Only) -->
     <menuitem id="menu_petty_cash_config"

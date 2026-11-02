@@ -5,18 +5,18 @@ from odoo.tools.misc import formatLang
 
 class PettyCashVoucher(models.Model):
     _name = 'petty.cash.voucher'
-    _description = 'Petty Cash Voucher'
+    _description = 'Petty Cash Expense'
     _inherit = ['mail.thread', 'mail.activity.mixin']
     _order = 'date desc, id desc'
     _check_company_auto = True
 
     _unique_move_id = models.Constraint(
         'UNIQUE(move_id)',
-        "A journal entry is already linked to this voucher.",
+        "A journal entry is already linked to this expense.",
     )
     _unique_name = models.UniqueIndex(
         "(name, company_id) WHERE name != 'New'",
-        "A voucher with this number already exists in this company.",
+        "An expense with this number already exists in this company.",
     )
 
     WORKFLOW_FIELDS = {
@@ -26,7 +26,7 @@ class PettyCashVoucher(models.Model):
     }
 
     name = fields.Char(
-        string='Voucher Number',
+        string='Expense Number',
         required=True,
         copy=False,
         readonly=True,
@@ -132,26 +132,14 @@ class PettyCashVoucher(models.Model):
         copy=False,
         ondelete='restrict',
     )
-    attachment_count = fields.Integer(
-        string='Receipts Count',
-        compute='_compute_attachment_count',
-    )
-
-    def _compute_attachment_count(self):
-        attachment_data = self.env['ir.attachment']._read_group(
-            [('res_model', '=', self._name), ('res_id', 'in', self.ids)],
-            groupby=['res_id'],
-            aggregates=['__count'],
-        )
-        counts = {res_id: count for res_id, count in attachment_data}
-        for voucher in self:
-            voucher.attachment_count = counts.get(voucher.id, 0)
+    receipt_file = fields.Binary(string='Receipt', copy=False, attachment=True)
+    receipt_filename = fields.Char(string='Receipt Filename', copy=False)
 
     @api.constrains('amount')
     def _check_amount_positive(self):
         for voucher in self:
             if voucher.currency_id.is_zero(voucher.amount) or voucher.currency_id.compare_amounts(voucher.amount, 0.0) < 0:
-                raise ValidationError(_("The voucher amount must be strictly greater than zero."))
+                raise ValidationError(_("The expense amount must be strictly greater than zero."))
 
     @api.constrains('fund_id', 'category_id')
     def _check_fund_category_company(self):
@@ -184,9 +172,9 @@ class PettyCashVoucher(models.Model):
             if any(f in vals for f in (self.WORKFLOW_FIELDS - {'state', 'name'})):
                 raise UserError(_("Workflow fields cannot be set at creation."))
             if 'state' in vals and vals['state'] != 'draft':
-                raise UserError(_("New vouchers must be created in draft state."))
+                raise UserError(_("New expenses must be created in draft state."))
             if 'name' in vals and vals['name'] != 'New':
-                raise UserError(_("Voucher number cannot be specified at creation."))
+                raise UserError(_("Expense number cannot be specified at creation."))
             vals['state'] = 'draft'
             vals['name'] = 'New'
         return super().create(vals_list)
@@ -197,19 +185,19 @@ class PettyCashVoucher(models.Model):
         business_fields = {
             'amount', 'fund_id', 'category_id', 'date', 'description',
             'payee_type', 'partner_id', 'employee_id', 'payee_name',
-            'analytic_account_id',
+            'analytic_account_id', 'receipt_file', 'receipt_filename',
         }
         if any(f in vals for f in business_fields):
             for voucher in self:
                 if voucher.state != 'draft':
-                    raise UserError(_("Cannot modify details of a voucher that is not in draft state."))
+                    raise UserError(_("Cannot modify details of an expense that is not in draft state."))
         return super().write(vals)
 
     @api.ondelete(at_uninstall=False)
     def _unlink_draft_only(self):
         for voucher in self:
             if voucher.state != 'draft':
-                raise UserError(_("Only draft vouchers can be deleted. Please cancel or archive instead."))
+                raise UserError(_("Only draft expenses can be deleted. Please cancel or archive instead."))
 
     # -------------------------------------------------------------------------
     # WORKFLOW ACTIONS
@@ -221,21 +209,21 @@ class PettyCashVoucher(models.Model):
         is_manager = self.env.user.has_group('petty_cash_management.group_petty_cash_manager')
         is_custodian = self.env.user in self.fund_id.custodian_ids
         if not (is_manager or is_custodian):
-            raise UserError(_("Only an assigned custodian of this fund or a Petty Cash Manager can submit this voucher."))
+            raise UserError(_("Only an assigned custodian of this fund or a Petty Cash Manager can submit this expense."))
 
         if self.state != 'draft':
-            raise UserError(_("Only draft vouchers can be submitted."))
+            raise UserError(_("Only draft expenses can be submitted."))
 
         # 1. Validations
         if self.fund_id.state != 'active':
-            raise UserError(_("Cannot submit a voucher against an inactive or closed fund."))
+            raise UserError(_("Cannot submit an expense against an inactive or closed fund."))
 
         today = fields.Date.context_today(self)
         if self.date > today:
-            raise UserError(_("Voucher date cannot be in the future."))
+            raise UserError(_("Expense date cannot be in the future."))
 
         if self.currency_id.is_zero(self.amount) or self.currency_id.compare_amounts(self.amount, 0.0) < 0:
-            raise UserError(_("The voucher amount must be strictly greater than zero."))
+            raise UserError(_("The expense amount must be strictly greater than zero."))
         if self.category_id.company_id != self.fund_id.company_id:
             raise UserError(_("The selected category and fund must belong to the same company."))
 
@@ -243,17 +231,17 @@ class PettyCashVoucher(models.Model):
         if self.category_id.tax_ids:
             raise UserError(_("Taxes are not supported in Phase 2. Category '%s' has taxes configured.") % self.category_id.name)
 
-        # 3. Per-voucher limit (hard stop)
+        # 3. Per-expense limit (hard stop)
         if self.fund_id.per_voucher_limit and self.currency_id.compare_amounts(self.amount, self.fund_id.per_voucher_limit) > 0:
-            raise UserError(_("The amount (%s) exceeds the fund's per-voucher limit of %s.") % (
+            raise UserError(_("The amount (%s) exceeds the fund's per-expense limit of %s.") % (
                 formatLang(self.env, self.amount, currency_obj=self.currency_id),
                 formatLang(self.env, self.fund_id.per_voucher_limit, currency_obj=self.currency_id),
             ))
 
         # 4. Receipt requirement
         if self.category_id.receipt_required:
-            if self.attachment_count <= 0:
-                raise UserError(_("A receipt attachment is required for this voucher."))
+            if not self.receipt_file:
+                raise UserError(_("A receipt is required for category '%s'. Upload the receipt, or ask a Manager to untick 'Receipt Required' on the category.") % self.category_id.name)
 
         # 5. Payee validation
         if self.payee_type == 'partner':
@@ -276,7 +264,7 @@ class PettyCashVoucher(models.Model):
         if not self.name or self.name == 'New':
             seq_val = self.env['ir.sequence'].with_company(self.company_id).next_by_code('petty.cash.voucher', sequence_date=self.date)
             if not seq_val:
-                raise UserError(_("Sequence for petty cash voucher not found for company %s.") % self.company_id.name)
+                raise UserError(_("Sequence for petty cash expense not found for company %s.") % self.company_id.name)
             workflow_vals['name'] = seq_val
 
         # 7. Check approval requirement
@@ -287,7 +275,7 @@ class PettyCashVoucher(models.Model):
         if needs_approval:
             workflow_vals['state'] = 'submitted'
             self._workflow_write(workflow_vals)
-            self.message_post(body=_("Voucher %s submitted for approval (Amount: %s).") % (
+            self.message_post(body=_("Expense %s submitted for approval (Amount: %s).") % (
                 self.name,
                 formatLang(self.env, self.amount, currency_obj=self.currency_id),
             ))
@@ -297,9 +285,9 @@ class PettyCashVoucher(models.Model):
 
     def action_approve(self):
         self.ensure_one()
-        self._check_approver_authorization()
+        self._check_approval_authorization()
         if self.state != 'submitted':
-            raise UserError(_("Only submitted vouchers can be approved."))
+            raise UserError(_("Only submitted expenses can be approved."))
         self._workflow_write({
             'approved_by_id': self.env.user.id,
             'approved_date': fields.Datetime.now(),
@@ -308,11 +296,11 @@ class PettyCashVoucher(models.Model):
 
     def action_reject(self):
         self.ensure_one()
-        self._check_approver_authorization()
+        self._check_approval_authorization()
         if self.state != 'submitted':
-            raise UserError(_("Only submitted vouchers can be rejected."))
+            raise UserError(_("Only submitted expenses can be rejected."))
         return {
-            'name': _("Reject Voucher"),
+            'name': _("Reject Expense"),
             'type': 'ir.actions.act_window',
             'res_model': 'petty.cash.voucher.reason.wizard',
             'view_mode': 'form',
@@ -325,45 +313,46 @@ class PettyCashVoucher(models.Model):
 
     def _action_reject_with_reason(self, reason):
         self.ensure_one()
-        self._check_approver_authorization()
+        self._check_approval_authorization()
         if self.state != 'submitted':
-            raise UserError(_("Only submitted vouchers can be rejected."))
+            raise UserError(_("Only submitted expenses can be rejected."))
         self._workflow_write({
             'rejection_reason': reason,
             'state': 'rejected',
         })
-        self.message_post(body=_("Voucher %s was rejected. Reason: %s") % (self.name, reason))
+        self.message_post(body=_("Expense %s was rejected. Reason: %s") % (self.name, reason))
 
     def action_reset_to_draft(self):
         for voucher in self:
             if voucher.state != 'rejected':
-                raise UserError(_("Only rejected vouchers can be reset to draft. Submitted vouchers must be cancelled."))
+                raise UserError(_("Only rejected expenses can be reset to draft. Submitted expenses must be cancelled."))
             is_mgr = self.env.user.has_group('petty_cash_management.group_petty_cash_manager')
             is_creator = (voucher.create_uid == self.env.user or voucher.submitted_by_id == self.env.user)
             is_cust = self.env.user in voucher.fund_id.custodian_ids
             if not (is_mgr or is_creator or is_cust):
-                raise UserError(_("Only the creator, an assigned custodian, or a Manager can reset this voucher to draft."))
+                raise UserError(_("Only the creator, an assigned custodian, or a Manager can reset this expense to draft."))
             voucher._workflow_write({'state': 'draft'})
 
-    def action_cancel(self):
-        self.ensure_one()
+    def _check_can_cancel(self):
         if self.state == 'cancelled':
-            raise UserError(_("The voucher is already cancelled."))
+            raise UserError(_("The expense is already cancelled."))
         if self.state == 'posted':
-            # Manager only reversal flow
             if not self.env.user.has_group('petty_cash_management.group_petty_cash_manager'):
-                raise UserError(_("Only a Petty Cash Manager can cancel a posted voucher."))
+                raise UserError(_("Only a Petty Cash Manager can cancel a posted expense."))
             if self.fund_id.state == 'closed':
-                raise UserError(_("Cannot reverse a voucher for a closed petty cash fund."))
+                raise UserError(_("Cannot reverse an expense for a closed petty cash fund."))
         else:
             is_mgr = self.env.user.has_group('petty_cash_management.group_petty_cash_manager')
             is_cust = self.env.user in self.fund_id.custodian_ids
             is_creator = (self.create_uid == self.env.user or self.submitted_by_id == self.env.user)
             if not (is_mgr or is_cust or is_creator):
-                raise UserError(_("Only the creator, a custodian, or a Petty Cash Manager can cancel this voucher."))
+                raise UserError(_("Only the creator, a custodian, or a Petty Cash Manager can cancel this expense."))
 
+    def action_cancel(self):
+        self.ensure_one()
+        self._check_can_cancel()
         return {
-            'name': _("Cancel Voucher"),
+            'name': _("Cancel Expense"),
             'type': 'ir.actions.act_window',
             'res_model': 'petty.cash.voucher.reason.wizard',
             'view_mode': 'form',
@@ -376,19 +365,13 @@ class PettyCashVoucher(models.Model):
 
     def _action_cancel_with_reason(self, reason):
         self.ensure_one()
+        self._check_can_cancel()
         if self.state == 'posted':
-            # Manager reversal
-            if not self.env.user.has_group('petty_cash_management.group_petty_cash_manager'):
-                raise UserError(_("Only a Petty Cash Manager can cancel a posted voucher."))
-
-            if self.fund_id.state == 'closed':
-                raise UserError(_("Cannot reverse a voucher for a closed petty cash fund."))
-
             # Core Odoo _post() requires account.group_account_invoice unless su
             has_invoice_group = self.env.user.has_group('account.group_account_invoice')
             has_account_manager = self.env.user.has_group('account.group_account_manager')
             if not (has_invoice_group or has_account_manager):
-                raise UserError(_("Cancelling a posted voucher requires the Invoicing/Billing accounting group (account.group_account_invoice)."))
+                raise UserError(_("Cancelling a posted expense requires the Invoicing/Billing accounting group (account.group_account_invoice)."))
 
             # Respect lock dates on reversal
             rev_date = self.date
@@ -413,33 +396,22 @@ class PettyCashVoucher(models.Model):
                 'cancel_reason': reason,
                 'state': 'cancelled',
             })
-            self.message_post(body=_("Voucher %s was cancelled by reversal entry %s. Reason: %s") % (
+            self.message_post(body=_("Expense %s was cancelled by reversal entry %s. Reason: %s") % (
                 self.name,
                 reverse_moves[:1].name or reverse_moves[:1].id,
                 reason,
             ))
         else:
-            is_mgr = self.env.user.has_group('petty_cash_management.group_petty_cash_manager')
-            is_cust = self.env.user in self.fund_id.custodian_ids
-            is_creator = (self.create_uid == self.env.user or self.submitted_by_id == self.env.user)
-            if not (is_mgr or is_cust or is_creator):
-                raise UserError(_("Only the creator, a custodian, or a Petty Cash Manager can cancel this voucher."))
-
             self._workflow_write({
                 'cancel_reason': reason,
                 'state': 'cancelled',
             })
-            self.message_post(body=_("Voucher %s was cancelled. Reason: %s") % (self.name, reason))
+            self.message_post(body=_("Expense %s was cancelled. Reason: %s") % (self.name, reason))
 
-    def _check_approver_authorization(self):
+    def _check_approval_authorization(self):
         """Verify user is authorized to approve/reject, checking groups and segregation of duties."""
-        is_approver = self.env.user.has_group('petty_cash_management.group_petty_cash_approver')
-        is_manager = self.env.user.has_group('petty_cash_management.group_petty_cash_manager')
-        if not (is_approver or is_manager):
-            raise UserError(_("Only an Approver or Petty Cash Manager can approve or reject vouchers."))
-
-        if not is_manager and self.env.user not in self.fund_id.custodian_ids:
-            raise UserError(_("You are not authorized to approve or reject vouchers for this fund."))
+        if not self.env.user.has_group('petty_cash_management.group_petty_cash_manager'):
+            raise UserError(_("Only a Petty Cash Manager can approve or reject expenses."))
 
         # Segregation of duties: blocked if user is create_uid, submitted_by_id, or employee's user
         blocked_users = {self.create_uid.id, self.submitted_by_id.id}
@@ -449,7 +421,7 @@ class PettyCashVoucher(models.Model):
             blocked_users.update(self.employee_id.work_contact_id.user_ids.ids)
 
         if self.env.user.id in blocked_users:
-            raise UserError(_("Segregation of duties: You cannot approve or reject a voucher that you created, submitted, or for which you are the payee employee."))
+            raise UserError(_("Segregation of duties: You cannot approve or reject an expense that you created, submitted, or for which you are the payee employee."))
 
     # -------------------------------------------------------------------------
     # LEDGER POSTING (CRITICAL)
@@ -461,9 +433,9 @@ class PettyCashVoucher(models.Model):
         Execution and concurrency protection steps:
         1. Row lock: Takes exclusive row-level lock on fund row using fund.lock_for_update() (converts LockError to clear UserError).
         2. Fresh balance read: Invalidates the fund's balance cache and recomputes live balance from posted move lines under the active row lock.
-        3. State re-check: Validates voucher state is in ('draft', 'submitted') and no move_id is linked (prevents duplicate posting).
-        4. Validates company fiscal lock dates for the voucher accounting date.
-        5. Validates available balance >= voucher amount using currency comparison (prevents negative cash).
+        3. State re-check: Validates expense state is in ('draft', 'submitted') and no move_id is linked (prevents duplicate posting).
+        4. Validates company fiscal lock dates for the expense accounting date.
+        5. Validates available balance >= expense amount using currency comparison (prevents negative cash).
         6. Creates and posts balanced account.move under scoped sudo() with fund company context.
         """
         self.ensure_one()
@@ -480,7 +452,7 @@ class PettyCashVoucher(models.Model):
 
         # 3. State & duplicate posting guard
         if self.state not in ('draft', 'submitted') or self.move_id:
-            raise UserError(_("This voucher has already been posted or is in an invalid state for posting."))
+            raise UserError(_("This expense has already been posted or is in an invalid state for posting."))
 
         # 4. Check fiscal lock date on fund company
         # Petty cash funds are cash journals (not sale/purchase), so we pass sale=False, purchase=False,
@@ -499,7 +471,7 @@ class PettyCashVoucher(models.Model):
 
         # 5. Check balance against amount
         if fund.currency_id.compare_amounts(fund.balance, self.amount) < 0:
-            raise UserError(_("Insufficient funds: fund '%s' has available balance of %s, but voucher requires %s.") % (
+            raise UserError(_("Insufficient funds: fund '%s' has available balance of %s, but expense requires %s.") % (
                 fund.name,
                 formatLang(self.env, fund.balance, currency_obj=fund.currency_id),
                 formatLang(self.env, self.amount, currency_obj=self.currency_id),
@@ -550,7 +522,7 @@ class PettyCashVoucher(models.Model):
         }
 
         # The ONE allowed sudo() in Phase 2:
-        # Custodians/approvers have no accounting posting rights (account.group_account_invoice).
+        # Custodians have no accounting posting rights (account.group_account_invoice).
         # sudo() bypasses the accounting access checks while preserving self.env.uid on create_uid.
         move = self.env['account.move'].with_company(fund.company_id).sudo().create(move_vals)
         move.action_post()
@@ -559,12 +531,12 @@ class PettyCashVoucher(models.Model):
             'move_id': move.id,
             'state': 'posted',
         })
-        self.message_post(body=_("Voucher %s posted to ledger as %s.") % (self.name, move.name or move.id))
+        self.message_post(body=_("Expense %s posted to ledger as %s.") % (self.name, move.name or move.id))
 
     def action_view_journal_entry(self):
         self.ensure_one()
         if not self.move_id:
-            raise UserError(_("No journal entry linked to this voucher."))
+            raise UserError(_("No journal entry linked to this expense."))
         return {
             'name': _("Journal Entry"),
             'type': 'ir.actions.act_window',
@@ -576,7 +548,7 @@ class PettyCashVoucher(models.Model):
     def action_view_reversal_entry(self):
         self.ensure_one()
         if not self.reversal_move_id:
-            raise UserError(_("No reversal entry linked to this voucher."))
+            raise UserError(_("No reversal entry linked to this expense."))
         return {
             'name': _("Reversal Entry"),
             'type': 'ir.actions.act_window',
@@ -585,40 +557,4 @@ class PettyCashVoucher(models.Model):
             'view_mode': 'form',
         }
 
-    def action_view_attachments(self):
-        self.ensure_one()
-        return {
-            'name': _("Attachments"),
-            'type': 'ir.actions.act_window',
-            'res_model': 'ir.attachment',
-            'view_mode': 'list,form',
-            'domain': [('res_model', '=', self._name), ('res_id', '=', self.id)],
-            'context': {
-                'default_res_model': self._name,
-                'default_res_id': self.id,
-            },
-        }
 
-
-class IrAttachment(models.Model):
-    _inherit = 'ir.attachment'
-
-    def unlink(self):
-        self._check_petty_cash_voucher_immutability()
-        return super().unlink()
-
-    def write(self, vals):
-        protected_fields = {'res_id', 'res_model', 'store_fname', 'mimetype', 'raw', 'datas', 'db_datas', 'name'}
-        if any(f in vals for f in protected_fields):
-            self._check_petty_cash_voucher_immutability()
-        return super().write(vals)
-
-    def _check_petty_cash_voucher_immutability(self):
-        """Receipt attachments for submitted or posted vouchers cannot be modified or deleted."""
-        voucher_attachments = self.filtered(lambda a: a.res_model == 'petty.cash.voucher' and a.res_id)
-        if not voucher_attachments:
-            return
-        vouchers = self.env['petty.cash.voucher'].browse(voucher_attachments.mapped('res_id'))
-        locked_vouchers = vouchers.filtered(lambda v: v.state in ('submitted', 'posted'))
-        if locked_vouchers:
-            raise UserError(_("Receipt attachments cannot be modified or deleted for submitted or posted petty cash vouchers."))

@@ -3,45 +3,19 @@ from odoo import Command
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import tagged, new_test_user
 from odoo.tools import mute_logger
-from odoo.addons.account.tests.common import AccountTestInvoicingCommon
+from .common import PettyCashTestCommon
 
 
 @tagged('post_install', '-at_install')
-class TestPettyCashFoundation(AccountTestInvoicingCommon):
+class TestPettyCashFoundation(PettyCashTestCommon):
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
 
-        # Company currency
-        cls.company = cls.env.company
-        cls.currency = cls.company.currency_id
-
-        # Distinct accounts for petty cash cash journal
-        cls.petty_cash_account = cls.env['account.account'].create({
-            'name': 'Petty Cash Liquidity Account',
-            'code': '101099',
-            'account_type': 'asset_cash',
-            'company_ids': [Command.link(cls.company.id)],
-        })
-        cls.suspense_account = cls.env['account.account'].create({
-            'name': 'Petty Cash Suspense Account',
-            'code': '101098',
-            'account_type': 'asset_current',
-            'company_ids': [Command.link(cls.company.id)],
-        })
-        cls.outstanding_receipt_account = cls.env['account.account'].create({
-            'name': 'Petty Cash Outstanding Receipts',
-            'code': '101097',
-            'account_type': 'asset_current',
-            'company_ids': [Command.link(cls.company.id)],
-        })
-        cls.outstanding_payment_account = cls.env['account.account'].create({
-            'name': 'Petty Cash Outstanding Payments',
-            'code': '101096',
-            'account_type': 'asset_current',
-            'company_ids': [Command.link(cls.company.id)],
-        })
+        cls.petty_cash_journal = cls.journal
+        cls.outstanding_receipt_account = cls.outstanding_receipts_account
+        cls.outstanding_payment_account = cls.outstanding_payments_account
 
         # Category expense account
         cls.expense_account = cls.env['account.account'].create({
@@ -49,22 +23,6 @@ class TestPettyCashFoundation(AccountTestInvoicingCommon):
             'code': '601099',
             'account_type': 'expense',
             'company_ids': [Command.link(cls.company.id)],
-        })
-
-        # Primary cash journal
-        cls.petty_cash_journal = cls.env['account.journal'].create({
-            'name': 'Head Office Cash Journal',
-            'type': 'cash',
-            'code': 'PC1',
-            'company_id': cls.company.id,
-            'default_account_id': cls.petty_cash_account.id,
-            'suspense_account_id': cls.suspense_account.id,
-        })
-        cls.petty_cash_journal.inbound_payment_method_line_ids.write({
-            'payment_account_id': cls.outstanding_receipt_account.id,
-        })
-        cls.petty_cash_journal.outbound_payment_method_line_ids.write({
-            'payment_account_id': cls.outstanding_payment_account.id,
         })
 
         # Secondary cash journal for multi-fund tests
@@ -89,15 +47,7 @@ class TestPettyCashFoundation(AccountTestInvoicingCommon):
             'payment_account_id': cls.outstanding_payment_account.id,
         })
 
-        # Test users
-        cls.custodian_user = new_test_user(
-            cls.env,
-            login='custodian_1',
-            name='Custodian One',
-            groups='petty_cash_management.group_petty_cash_custodian',
-            company_id=cls.company.id,
-            company_ids=[Command.set(cls.company.ids)],
-        )
+        # Secondary custodian user
         cls.custodian_user_2 = new_test_user(
             cls.env,
             login='custodian_2',
@@ -106,29 +56,6 @@ class TestPettyCashFoundation(AccountTestInvoicingCommon):
             company_id=cls.company.id,
             company_ids=[Command.set(cls.company.ids)],
         )
-        cls.manager_user = new_test_user(
-            cls.env,
-            login='petty_manager',
-            name='Petty Manager',
-            groups='petty_cash_management.group_petty_cash_manager',
-            company_id=cls.company.id,
-            company_ids=[Command.set(cls.company.ids)],
-        )
-        cls.approver_user = new_test_user(
-            cls.env,
-            login='petty_approver',
-            name='Petty Approver',
-            groups='petty_cash_management.group_petty_cash_approver',
-            company_id=cls.company.id,
-            company_ids=[Command.set(cls.company.ids)],
-        )
-
-        # Grant Petty Cash Manager group to test runner user
-        cls.env.user.write({
-            'group_ids': [
-                Command.link(cls.env.ref('petty_cash_management.group_petty_cash_manager').id),
-            ],
-        })
 
     def test_activation_validation(self):
         """Test all missing configuration failure cases during action_activate, then succeed."""
@@ -399,12 +326,11 @@ class TestPettyCashFoundation(AccountTestInvoicingCommon):
             'custodian_ids': [Command.link(user_comp_b.id)],
         })
 
-        # Approver who is NOT a custodian cannot see another custodian's fund
-        appr_funds = self.env['petty.cash.fund'].with_user(self.approver_user).search([])
-        self.assertNotIn(fund_1, appr_funds)
-        self.assertNotIn(fund_2, appr_funds)
+        # Custodian who is NOT in custodian_ids cannot see or read another custodian's fund
+        c2_funds = self.env['petty.cash.fund'].with_user(self.custodian_user_2).search([])
+        self.assertNotIn(fund_1, c2_funds)
         with self.assertRaises(AccessError):
-            fund_1.with_user(self.approver_user).read(['name'])
+            fund_1.with_user(self.custodian_user_2).read(['name'])
 
         # Users belonging to Company A cannot see fund_b
         mgr_company_funds = self.env['petty.cash.fund'].with_user(self.manager_user).search([])
@@ -419,7 +345,13 @@ class TestPettyCashFoundation(AccountTestInvoicingCommon):
             fund_b.with_user(self.manager_user).unlink()
 
     def test_custodian_only_user_access(self):
-        """User with ONLY Custodian group can view assigned fund, open form view and computed balance without AccessError."""
+        """User with ONLY Custodian group:
+        - sees only own funds, cannot see other funds
+        - can edit non-control fields (name, notes) on own fund
+        - cannot edit control fields (UserError)
+        - cannot create or activate a fund
+        - cannot see Configuration or To Approve menus
+        """
         fund = self.env['petty.cash.fund'].create({
             'name': 'Custodian Access Test Fund',
             'journal_id': self.petty_cash_journal.id,
@@ -442,6 +374,47 @@ class TestPettyCashFoundation(AccountTestInvoicingCommon):
         # Opening the fund form view (get_views) works cleanly without AccessError
         views = fund.with_user(self.custodian_user).get_views([(False, 'form')])
         self.assertTrue(views.get('views', {}).get('form'))
+
+        # 1. Custodian can edit non-control fields (name, notes)
+        fund.with_user(self.custodian_user).write({
+            'name': 'Updated Fund Name by Custodian',
+            'notes': 'Custodian added fund notes',
+        })
+        self.assertEqual(fund.name, 'Updated Fund Name by Custodian')
+        self.assertEqual(fund.notes, 'Custodian added fund notes')
+
+        # 2. Custodian CANNOT edit control fields (UserError)
+        control_tests = [
+            ('custodian_ids', [Command.clear()]),
+            ('journal_id', self.petty_cash_journal.id),
+            ('company_id', self.company.id),
+            ('approval_threshold', 250.0),
+            ('per_voucher_limit', 400.0),
+            ('state', 'active'),
+            ('low_balance_alert', 50.0),
+            ('active', False),
+        ]
+        for fname, val in control_tests:
+            with self.assertRaises(UserError, msg=f"Custodian writing {fname} directly should raise UserError"):
+                fund.with_user(self.custodian_user).write({fname: val})
+
+        # 3. Custodian CANNOT create a fund (AccessError)
+        with self.assertRaises(AccessError):
+            self.env['petty.cash.fund'].with_user(self.custodian_user).create({
+                'name': 'Unauthorized Custodian Fund',
+                'journal_id': self.petty_cash_journal.id,
+            })
+
+        # 4. Custodian CANNOT activate a fund (UserError)
+        with self.assertRaises(UserError):
+            fund.with_user(self.custodian_user).action_activate()
+
+        # 5. Custodian CANNOT see Configuration or To Approve menus
+        menu_to_approve = self.env.ref('petty_cash_management.menu_petty_cash_voucher_to_approve')
+        menu_config = self.env.ref('petty_cash_management.menu_petty_cash_config')
+        self.assertIn(self.env.ref('petty_cash_management.group_petty_cash_manager'), menu_to_approve.group_ids)
+        self.assertIn(self.env.ref('petty_cash_management.group_petty_cash_manager'), menu_config.group_ids)
+        self.assertFalse(self.custodian_user.has_group('petty_cash_management.group_petty_cash_manager'))
 
     def test_manager_without_accounting_cannot_read_move_lines(self):
         """Manager group does not grant access to account.move.line directly."""

@@ -36,7 +36,7 @@ class PettyCashCategory(models.Model):
     receipt_required = fields.Boolean(
         string='Receipt Required',
         default=True,
-        help="If enabled, attaching a receipt is mandatory for vouchers in this category.",
+        help="If enabled, attaching a receipt is mandatory for expenses in this category.",
     )
     analytic_account_id = fields.Many2one(
         comodel_name='account.analytic.account',

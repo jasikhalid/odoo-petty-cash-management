@@ -2,7 +2,7 @@
 <odoo>
     <data noupdate="1">
         <record id="seq_petty_cash_voucher" model="ir.sequence">
-            <field name="name">Petty Cash Voucher</field>
+            <field name="name">Petty Cash Expense</field>
             <field name="code">petty.cash.voucher</field>
             <field name="implementation">no_gap</field>
             <field name="prefix">PCV/%(range_year)s/</field>
