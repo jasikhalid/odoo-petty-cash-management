@@ -158,12 +158,9 @@ class PettyCashVoucher(models.Model):
     def default_get(self, fields_list):
         res = super().default_get(fields_list)
         if 'fund_id' in fields_list and not res.get('fund_id'):
-            active_funds = self.env['petty.cash.fund'].search([
-                ('state', '=', 'active'),
-                ('custodian_ids', 'in', [self.env.uid]),
-            ])
-            if len(active_funds) == 1:
-                res['fund_id'] = active_funds.id
+            fund_id = self.env['petty.cash.fund']._get_default_fund_for_user()
+            if fund_id:
+                res['fund_id'] = fund_id
         return res
 
     @api.model_create_multi
@@ -222,20 +219,16 @@ class PettyCashVoucher(models.Model):
         if self.date > today:
             raise UserError(_("Expense date cannot be in the future."))
 
-        if self.currency_id.is_zero(self.amount) or self.currency_id.compare_amounts(self.amount, 0.0) < 0:
-            raise UserError(_("The expense amount must be strictly greater than zero."))
-        if self.category_id.company_id != self.fund_id.company_id:
-            raise UserError(_("The selected category and fund must belong to the same company."))
-
         # 2. Tax rule (Phase 2 constraint)
         if self.category_id.tax_ids:
             raise UserError(_("Taxes are not supported in Phase 2. Category '%s' has taxes configured.") % self.category_id.name)
 
         # 3. Per-expense limit (hard stop)
-        if self.fund_id.per_voucher_limit and self.currency_id.compare_amounts(self.amount, self.fund_id.per_voucher_limit) > 0:
-            raise UserError(_("The amount (%s) exceeds the fund's per-expense limit of %s.") % (
+        per_expense_limit = self.company_id.petty_cash_per_expense_limit
+        if per_expense_limit and self.currency_id.compare_amounts(self.amount, per_expense_limit) > 0:
+            raise UserError(_("The amount (%s) exceeds the company's per-expense limit of %s.") % (
                 formatLang(self.env, self.amount, currency_obj=self.currency_id),
-                formatLang(self.env, self.fund_id.per_voucher_limit, currency_obj=self.currency_id),
+                formatLang(self.env, per_expense_limit, currency_obj=self.currency_id),
             ))
 
         # 4. Receipt requirement
@@ -268,9 +261,10 @@ class PettyCashVoucher(models.Model):
             workflow_vals['name'] = seq_val
 
         # 7. Check approval requirement
+        approval_threshold = self.company_id.petty_cash_approval_threshold
         needs_approval = bool(
-            self.fund_id.approval_threshold
-            and self.currency_id.compare_amounts(self.amount, self.fund_id.approval_threshold) > 0
+            approval_threshold
+            and self.currency_id.compare_amounts(self.amount, approval_threshold) > 0
         )
         if needs_approval:
             workflow_vals['state'] = 'submitted'
@@ -469,7 +463,13 @@ class PettyCashVoucher(models.Model):
             raise UserError(_("You cannot add/modify entries prior to and inclusive of: %s.") %
                             self.env['res.company']._format_lock_dates(violated_locks))
 
-        # 5. Check balance against amount
+        # 5. Check per-expense limit and balance against amount
+        per_expense_limit = self.company_id.petty_cash_per_expense_limit
+        if per_expense_limit and self.currency_id.compare_amounts(self.amount, per_expense_limit) > 0:
+            raise UserError(_("The amount (%s) exceeds the company's per-expense limit of %s.") % (
+                formatLang(self.env, self.amount, currency_obj=self.currency_id),
+                formatLang(self.env, per_expense_limit, currency_obj=self.currency_id),
+            ))
         if fund.currency_id.compare_amounts(fund.balance, self.amount) < 0:
             raise UserError(_("Insufficient funds: fund '%s' has available balance of %s, but expense requires %s.") % (
                 fund.name,

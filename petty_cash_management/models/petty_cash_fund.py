@@ -6,10 +6,7 @@ FUND_CONTROL_FIELDS = {
     'custodian_ids',
     'journal_id',
     'company_id',
-    'approval_threshold',
-    'per_voucher_limit',
     'state',
-    'low_balance_alert',
     'analytic_account_id',
     'active',
 }
@@ -92,29 +89,13 @@ class PettyCashFund(models.Model):
         string='Current Balance',
         compute='_compute_balance',
         compute_sudo=True,
-        search='_search_balance',
         currency_field='currency_id',
         store=False,
-    )
-    low_balance_alert = fields.Monetary(
-        string='Low Balance Alert Threshold',
-        currency_field='currency_id',
-        help="Optional alert threshold. Fund will be flagged when balance falls below this amount.",
     )
     is_low_balance = fields.Boolean(
         string='Low Balance Alert',
         compute='_compute_is_low_balance',
         search='_search_is_low_balance',
-    )
-    per_voucher_limit = fields.Monetary(
-        string='Per-Expense Limit',
-        currency_field='currency_id',
-        help="Maximum single expense payout limit.",
-    )
-    approval_threshold = fields.Monetary(
-        string='Approval Threshold',
-        currency_field='currency_id',
-        help="Expenses above this amount require manager approval.",
     )
     analytic_account_id = fields.Many2one(
         comodel_name='account.analytic.account',
@@ -134,6 +115,15 @@ class PettyCashFund(models.Model):
         string='Top-ups Count',
         compute='_compute_topup_count',
     )
+
+    @api.model
+    def _get_default_fund_for_user(self, user_id=None):
+        """Returns the single active fund assigned to the user, or False."""
+        active_funds = self.search([
+            ('state', '=', 'active'),
+            ('custodian_ids', 'in', [user_id or self.env.uid]),
+        ])
+        return active_funds.id if len(active_funds) == 1 else False
 
 
     # Constraints
@@ -193,33 +183,14 @@ class PettyCashFund(models.Model):
             key = (fund.journal_id.id, fund.journal_id.default_account_id.id)
             fund.balance = balance_map.get(key, 0.0)
 
-    def _search_balance(self, operator, value):
-        import operator as py_op
-        op_map = {
-            '<': py_op.lt,
-            '<=': py_op.le,
-            '>': py_op.gt,
-            '>=': py_op.ge,
-            '=': lambda b, v, f: f.currency_id.is_zero(b - v),
-            '!=': lambda b, v, f: not f.currency_id.is_zero(b - v),
-        }
-        if operator not in op_map:
-            raise UserError(_("Unsupported search operator '%s' for balance.", operator))
-        comp = op_map[operator]
-        funds = self.search([])
-        if operator in ('=', '!='):
-            matched_ids = [f.id for f in funds if comp(f.balance, value, f)]
-        else:
-            matched_ids = [f.id for f in funds if comp(f.balance, value)]
-        return [('id', 'in', matched_ids)]
-
-    @api.depends('balance', 'low_balance_alert', 'state')
+    @api.depends('balance', 'company_id.petty_cash_low_balance_threshold', 'state')
     def _compute_is_low_balance(self):
         for fund in self:
+            threshold = fund.company_id.petty_cash_low_balance_threshold
             fund.is_low_balance = (
                 fund.state == 'active'
-                and fund.low_balance_alert > 0.0
-                and fund.balance < fund.low_balance_alert
+                and threshold > 0.0
+                and fund.balance < threshold
             )
 
     def _search_is_low_balance(self, operator, value):
@@ -227,7 +198,7 @@ class PettyCashFund(models.Model):
             raise UserError(_("Unsupported search operator for low balance alert."))
         active_alert_funds = self.search([
             ('state', '=', 'active'),
-            ('low_balance_alert', '>', 0.0),
+            ('company_id.petty_cash_low_balance_threshold', '>', 0.0),
         ])
         matching_ids = [fund.id for fund in active_alert_funds if fund.is_low_balance]
         is_true = (operator == '=' and value) or (operator == '!=' and not value)
@@ -364,23 +335,4 @@ class PettyCashFund(models.Model):
             'view_mode': 'list,form',
             'domain': [('fund_id', '=', self.id)],
             'context': {'default_fund_id': self.id},
-        }
-
-    def action_view_journal_items(self):
-        self.ensure_one()
-        return {
-            'type': 'ir.actions.act_window',
-            'name': _('Journal Items: %s', self.name),
-            'res_model': 'account.move.line',
-            'view_mode': 'list,form',
-            'domain': [
-                ('journal_id', '=', self.journal_id.id),
-                ('account_id', '=', self.journal_id.default_account_id.id),
-                ('parent_state', '=', 'posted'),
-            ],
-            'context': {
-                'create': False,
-                'edit': False,
-                'delete': False,
-            },
         }

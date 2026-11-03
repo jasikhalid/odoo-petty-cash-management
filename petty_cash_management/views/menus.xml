@@ -5,7 +5,7 @@
               name="Petty Cash"
               sequence="45"
               web_icon="petty_cash_management,static/description/icon.png"
-              groups="petty_cash_management.group_petty_cash_custodian"/>
+              groups="petty_cash_management.group_petty_cash_custodian,base.group_system"/>
 
     <!-- Funds Menu -->
     <menuitem id="menu_petty_cash_fund"
@@ -36,12 +36,20 @@
               sequence="30"
               groups="petty_cash_management.group_petty_cash_manager"/>
 
-    <!-- Configuration Menu (Manager Only) -->
+    <!-- Configuration Menu (Manager and Administrator) -->
     <menuitem id="menu_petty_cash_config"
               name="Configuration"
               parent="menu_petty_cash_root"
               sequence="100"
-              groups="petty_cash_management.group_petty_cash_manager"/>
+              groups="petty_cash_management.group_petty_cash_manager,base.group_system"/>
+
+    <!-- Settings Menu (Administrator Only) -->
+    <menuitem id="menu_petty_cash_settings"
+              name="Settings"
+              parent="menu_petty_cash_config"
+              action="action_petty_cash_configuration"
+              sequence="5"
+              groups="base.group_system"/>
 
     <!-- Categories Menu (Manager Only) -->
     <menuitem id="menu_petty_cash_category"

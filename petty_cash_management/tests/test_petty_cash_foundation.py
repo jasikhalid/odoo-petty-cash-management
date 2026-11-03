@@ -1,8 +1,9 @@
 import psycopg2
-from odoo import Command
+from odoo import Command, fields
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import tagged, new_test_user
 from odoo.tools import mute_logger
+from odoo.tools.safe_eval import safe_eval
 from .common import PettyCashTestCommon
 
 
@@ -32,20 +33,11 @@ class TestPettyCashFoundation(PettyCashTestCommon):
             'account_type': 'asset_cash',
             'company_ids': [Command.link(cls.company.id)],
         })
-        cls.petty_cash_journal_2 = cls.env['account.journal'].create({
-            'name': 'Branch Cash Journal',
-            'type': 'cash',
-            'code': 'PC2',
-            'company_id': cls.company.id,
-            'default_account_id': cls.petty_cash_account_2.id,
-            'suspense_account_id': cls.suspense_account.id,
-        })
-        cls.petty_cash_journal_2.inbound_payment_method_line_ids.write({
-            'payment_account_id': cls.outstanding_receipt_account.id,
-        })
-        cls.petty_cash_journal_2.outbound_payment_method_line_ids.write({
-            'payment_account_id': cls.outstanding_payment_account.id,
-        })
+        cls.petty_cash_journal_2 = cls._create_cash_journal(
+            name='Branch Cash Journal',
+            code='PC2',
+            account=cls.petty_cash_account_2,
+        )
 
         # Secondary custodian user
         cls.custodian_user_2 = new_test_user(
@@ -388,10 +380,7 @@ class TestPettyCashFoundation(PettyCashTestCommon):
             ('custodian_ids', [Command.clear()]),
             ('journal_id', self.petty_cash_journal.id),
             ('company_id', self.company.id),
-            ('approval_threshold', 250.0),
-            ('per_voucher_limit', 400.0),
             ('state', 'active'),
-            ('low_balance_alert', 50.0),
             ('active', False),
         ]
         for fname, val in control_tests:
@@ -552,3 +541,222 @@ class TestPettyCashFoundation(PettyCashTestCommon):
                 'journal_id': self.petty_cash_journal.id,
                 'custodian_ids': [Command.link(user_other_comp.id)],
             })
+
+    def test_company_level_thresholds_configuration(self):
+        """Company-level controls apply to all funds; old fields removed from fund and views; 0 disables; negative rejected."""
+        # 1. petty.cash.fund no longer has the three fields
+        fund_fields = self.env['petty.cash.fund'].fields_get()
+        self.assertNotIn('low_balance_alert', fund_fields)
+        self.assertNotIn('per_voucher_limit', fund_fields)
+        self.assertNotIn('approval_threshold', fund_fields)
+
+        # 2. Fund form view contains none of them
+        arch = self.env['petty.cash.fund'].get_view(view_type='form')['arch']
+        self.assertNotIn('low_balance_alert', arch)
+        self.assertNotIn('per_voucher_limit', arch)
+        self.assertNotIn('approval_threshold', arch)
+
+        # 3. Negative values rejected on res.company
+        with self.assertRaises(ValidationError):
+            self.company.write({'petty_cash_low_balance_threshold': -10.0})
+        with self.assertRaises(ValidationError):
+            self.company.write({'petty_cash_per_expense_limit': -5.0})
+        with self.assertRaises(ValidationError):
+            self.company.write({'petty_cash_approval_threshold': -1.0})
+
+        # 4. Changing company value affects all funds of that company
+        fund1 = self.env['petty.cash.fund'].create({
+            'name': 'Fund Alpha',
+            'journal_id': self.petty_cash_journal.id,
+            'custodian_ids': [Command.link(self.custodian_user.id)],
+        })
+        fund1.action_activate()
+
+        fund2 = self.env['petty.cash.fund'].create({
+            'name': 'Fund Beta',
+            'journal_id': self.petty_cash_journal_2.id,
+            'custodian_ids': [Command.link(self.custodian_user.id)],
+        })
+        fund2.action_activate()
+
+        self.company.write({'petty_cash_low_balance_threshold': 100.0})
+        # Both funds have 0 balance initially, so both are low balance
+        fund1._compute_is_low_balance()
+        fund2._compute_is_low_balance()
+        self.assertTrue(fund1.is_low_balance)
+        self.assertTrue(fund2.is_low_balance)
+
+        # 5. 0 disables low balance alert
+        self.company.write({'petty_cash_low_balance_threshold': 0.0})
+        fund1._compute_is_low_balance()
+        fund2._compute_is_low_balance()
+        self.assertFalse(fund1.is_low_balance)
+        self.assertFalse(fund2.is_low_balance)
+
+        # 6. A second company is unaffected
+        comp_b = self.env['res.company'].create({'name': 'Company B Settings Test'})
+        self.company.write({'petty_cash_low_balance_threshold': 200.0})
+        comp_b.write({'petty_cash_low_balance_threshold': 50.0})
+        self.assertEqual(self.company.petty_cash_low_balance_threshold, 200.0)
+        self.assertEqual(comp_b.petty_cash_low_balance_threshold, 50.0)
+
+        # 7. Custodian can read vouchers/funds normally and cannot write company settings
+        fund1.with_user(self.custodian_user).read(['name', 'balance', 'state'])
+        with self.assertRaises(AccessError):
+            self.company.with_user(self.custodian_user).write({'petty_cash_approval_threshold': 300.0})
+        with self.assertRaises(AccessError):
+            self.env['res.config.settings'].with_user(self.custodian_user).create({
+                'petty_cash_approval_threshold': 300.0,
+            })
+
+    def test_res_config_settings_petty_cash_block(self):
+        """Admin can configure petty cash settings via res.config.settings."""
+        settings = self.env['res.config.settings'].create({
+            'petty_cash_low_balance_threshold': 75.0,
+            'petty_cash_per_expense_limit': 600.0,
+            'petty_cash_approval_threshold': 120.0,
+        })
+        settings.execute()
+        self.assertEqual(self.company.petty_cash_low_balance_threshold, 75.0)
+        self.assertEqual(self.company.petty_cash_per_expense_limit, 600.0)
+        self.assertEqual(self.company.petty_cash_approval_threshold, 120.0)
+
+    def test_petty_cash_configuration_settings_menu_and_access(self):
+        """Settings menu configuration action and multi-tier role menu visibility."""
+        menu_config = self.env.ref('petty_cash_management.menu_petty_cash_config')
+        menu_settings = self.env.ref('petty_cash_management.menu_petty_cash_settings')
+        cat_menu = self.env.ref('petty_cash_management.menu_petty_cash_category')
+        source_menu = self.env.ref('petty_cash_management.menu_petty_cash_topup_source')
+
+        # 1. Structure and groups of Settings menu and Configuration parent
+        self.assertEqual(menu_settings.parent_id, menu_config)
+        self.assertEqual(menu_settings.sequence, 5)
+        self.assertEqual(menu_settings.group_ids, self.env.ref('base.group_system'))
+        self.assertEqual(
+            set(menu_config.group_ids.ids),
+            {self.env.ref('petty_cash_management.group_petty_cash_manager').id, self.env.ref('base.group_system').id},
+        )
+
+        action = menu_settings.action
+        self.assertEqual(action.res_model, 'res.config.settings')
+        self.assertEqual(action.view_mode, 'form')
+        self.assertEqual(safe_eval(action.context), {'module': 'petty_cash_management', 'bin_size': False})
+
+        # 2. Administrator without Petty Cash Manager group
+        admin_no_manager = new_test_user(
+            self.env,
+            login='admin_without_petty_cash_manager',
+            name='Admin Without Petty Cash Manager',
+            groups='base.group_system',
+            company_id=self.company.id,
+            company_ids=[Command.set(self.company.ids)],
+        )
+        self.assertFalse(admin_no_manager.has_group('petty_cash_management.group_petty_cash_manager'))
+
+        config_menus = menu_config | menu_settings | cat_menu | source_menu
+        visible_admin = config_menus.with_user(admin_no_manager)._filter_visible_menus()
+        self.assertIn(menu_config, visible_admin)
+        self.assertIn(menu_settings, visible_admin)
+        self.assertNotIn(cat_menu, visible_admin)
+        self.assertNotIn(source_menu, visible_admin)
+
+        # Admin saves the three company values via settings form
+        settings = self.env['res.config.settings'].with_user(admin_no_manager).create({
+            'petty_cash_low_balance_threshold': 85.0,
+            'petty_cash_per_expense_limit': 650.0,
+            'petty_cash_approval_threshold': 130.0,
+        })
+        settings.execute()
+        self.assertEqual(self.company.petty_cash_low_balance_threshold, 85.0)
+        self.assertEqual(self.company.petty_cash_per_expense_limit, 650.0)
+        self.assertEqual(self.company.petty_cash_approval_threshold, 130.0)
+
+        # 3. Petty Cash Manager who is not an administrator sees Categories and Top-up Sources, but not Settings
+        visible_mgr = config_menus.with_user(self.manager_user)._filter_visible_menus()
+        self.assertIn(menu_config, visible_mgr)
+        self.assertNotIn(menu_settings, visible_mgr)
+        self.assertIn(cat_menu, visible_mgr)
+        self.assertIn(source_menu, visible_mgr)
+
+        # 4. Custodian sees none of Configuration
+        visible_cust = config_menus.with_user(self.custodian_user)._filter_visible_menus()
+        self.assertNotIn(menu_config, visible_cust)
+        self.assertNotIn(menu_settings, visible_cust)
+        self.assertNotIn(cat_menu, visible_cust)
+        self.assertNotIn(source_menu, visible_cust)
+
+    def test_analytic_account_on_fund_propagation_and_security(self):
+        """Manager sets analytic account on fund; voucher propagates it to move line; custodian cannot change it."""
+        analytic_plan = self.env['account.analytic.plan'].create({'name': 'Petty Cash Test Plan'})
+        analytic_account = self.env['account.analytic.account'].create({
+            'name': 'Branch Operations Analytic',
+            'plan_id': analytic_plan.id,
+            'company_id': self.company.id,
+        })
+        other_analytic_account = self.env['account.analytic.account'].create({
+            'name': 'Other Analytic',
+            'plan_id': analytic_plan.id,
+            'company_id': self.company.id,
+        })
+
+        fund = self.env['petty.cash.fund'].create({
+            'name': 'Analytic Propagation Fund',
+            'journal_id': self.petty_cash_journal.id,
+            'custodian_ids': [Command.link(self.custodian_user.id)],
+            'company_id': self.company.id,
+        })
+        fund.action_activate()
+
+        # 1. Manager sets analytic account on active fund
+        fund.with_user(self.manager_user).write({'analytic_account_id': analytic_account.id})
+        self.assertEqual(fund.analytic_account_id, analytic_account)
+
+        # 2. Seed fund balance with a posted cash entry
+        bank_acc = self.company_data['default_account_assets']
+        topup_move = self.env['account.move'].create({
+            'journal_id': self.petty_cash_journal.id,
+            'date': fields.Date.today(),
+            'line_ids': [
+                Command.create({
+                    'account_id': self.petty_cash_account.id,
+                    'debit': 500.0,
+                    'credit': 0.0,
+                }),
+                Command.create({
+                    'account_id': bank_acc.id,
+                    'debit': 0.0,
+                    'credit': 500.0,
+                }),
+            ],
+        })
+        topup_move.action_post()
+
+        # 3. Category without analytic account
+        category = self.env['petty.cash.category'].create({
+            'name': 'Analytic Supplies Category',
+            'expense_account_id': self.expense_account.id,
+            'company_id': self.company.id,
+            'receipt_required': False,
+        })
+
+        # 4. Voucher submitted below approval threshold auto-posts and carries fund analytic account
+        self.company.write({'petty_cash_approval_threshold': 0.0})
+        voucher = self.env['petty.cash.voucher'].with_user(self.custodian_user).create({
+            'fund_id': fund.id,
+            'category_id': category.id,
+            'description': 'Office Stationary Analytic',
+            'amount': 45.0,
+            'payee_type': 'other',
+            'payee_name': 'Stationery Store',
+        })
+        voucher.action_submit()
+        self.assertEqual(voucher.state, 'posted')
+        self.assertTrue(voucher.move_id)
+
+        expense_line = voucher.move_id.with_env(self.env).line_ids.filtered(lambda l: l.account_id == category.expense_account_id)
+        self.assertEqual(expense_line.analytic_distribution, {str(analytic_account.id): 100.0})
+
+        # 5. Custodian cannot modify analytic_account_id on fund (control field protection)
+        with self.assertRaises(UserError) as cm:
+            fund.with_user(self.custodian_user).write({'analytic_account_id': other_analytic_account.id})
+        self.assertIn("Custodians cannot modify control fields", str(cm.exception))

@@ -1,78 +1,32 @@
 # Petty Cash Management — Final Project Report
 
-## 1. Features
-- **Direct General Ledger Integration**: Each petty cash fund is linked directly to a dedicated Odoo Cash Journal (`account.journal` of type `cash`). Live balances are dynamically computed from posted journal items (`account.move.line`) without shadow tables or balance drift.
-- **Strict Concurrency Protection**: High-concurrency disbursements employ PostgreSQL row-level locks (`SELECT ... FOR UPDATE`), fresh live balance recomputation under the lock, and validation to prevent negative cash balances and race conditions.
-- **Workflow Protection & Immutability**: All workflow fields (`state`, `name`, `move_id`, audit dates/users) are strictly guarded against direct ORM/RPC modification. Posted records cannot be altered or deleted.
-- **Configurable Multi-Tier Approvals**: Automatic approval bypass for expenses below threshold; mandatory sign-off with enforced segregation of duties (author/payee cannot approve) for expenses exceeding threshold.
-- **Receipt Auditing**: Single receipt file per expense with mandatory upload verification per expense category flag; immutability enforced in business fields once submitted or posted without any core ir.attachment overrides.
-- **Branch Top-up Replenishment**: Direct funding from authorized bank or treasury sources with non-expense/income source constraints and fiscal lock date verification.
-- **Audit-Compliant Reversals**: Posted expenses can only be cancelled via accounting reversing entries created in the fund's cash journal; posted top-ups are safely corrected through standard ledger reversal by accountants.
-- **Multi-Company Isolation**: Complete data and ledger isolation across companies with clean dropdown behavior on newly initialized forms.
+## 1. Architecture & Design
+- **Direct GL Integration**: Funds link directly to Odoo Cash Journals (`account.journal`, `type='cash'`). Real-time balances aggregate dynamically from posted lines (`account.move.line`).
+- **Concurrency & Immutability**: Row-level locking (`lock_for_update()`) protects against overdrafts and race conditions. Posted records and workflow fields are immutable.
+- **Workflow & Controls**: Configurable approval threshold, per-expense limit, and low-balance alert configured per company under Settings. Enforces segregation of duties and receipt validation per category.
+- **Ledger Sync**: Bidirectional sync between petty cash records and general ledger moves on draft, cancel, reverse, and re-post.
 
----
+## 2. Security Matrix
 
-## 2. Security Model
-
-| Role / Model | Fund (`petty.cash.fund`) | Category (`petty.cash.category`) | Expense (`petty.cash.voucher`) | Top-up (`petty.cash.topup`) | Top-up Source (`petty.cash.topup.source`) | Accounting Group Needed |
+| Role | Fund | Category | Expense | Top-up | Top-up Source | Accounting Group |
 |---|---|---|---|---|---|---|
-| **Custodian** | Read + Edit non-control (assigned) | Read-only | CRUD (assigned funds only) | Read-only (assigned funds) | No access | None |
-| **Manager (No Acct)** | Full CRUD, Activate, Close | Full CRUD | Full CRUD + Approve / Reject | Create / Read / Cancel Draft | Full CRUD | None |
-| **Manager (+ Readonly)** | Full CRUD, can select journals | Full CRUD | Full CRUD + Approve / Reject | Create / Read / Cancel Draft | Full CRUD (can select accounts) | `account.group_account_readonly` |
-| **Manager (+ Invoicing)** | Full CRUD, Activate, Close | Full CRUD | Full CRUD + Cancel (Reverse) + Approve / Reject | Full CRUD + Post to Ledger | Full CRUD | `account.group_account_invoice` |
+| **Custodian** | Read + Edit non-control | Read | CRUD (own funds) | Read (own funds) | None | None |
+| **Manager (No Acct)** | Full CRUD, Activate, Close | Full CRUD | Full CRUD + Approve/Reject | Create/Read/Cancel Draft | Full CRUD | None |
+| **Manager (+ Readonly)** | Full CRUD (can select journals) | Full CRUD | Full CRUD + Approve/Reject | Create/Read/Cancel Draft | Full CRUD (can select accounts) | `account.group_account_readonly` |
+| **Manager (+ Invoicing)** | Full CRUD, Activate, Close | Full CRUD | Full CRUD + Cancel/Reverse + Approve/Reject | Full CRUD + Post | Full CRUD | `account.group_account_invoice` |
 
----
+## 3. Journal Entry Structure
+- **Disbursement**: `Dr` Expense Account (`category.expense_account_id`) / `Cr` Petty Cash Account (`fund.default_account_id`).
+- **Reversal**: `Dr` Petty Cash Account / `Cr` Expense Account.
+- **Top-up**: `Dr` Petty Cash Account / `Cr` Source Account (`source.account_id`).
 
-## 3. Journal Entries Created
+## 4. Test Suite Summary
+- `TestPettyCashFoundation`: 17 tests (setup, constraints, validation, balance compute, isolation).
+- `TestPettyCashVoucher`: 27 tests (workflow, thresholds, receipts, ledger posting, reversal, concurrency).
+- `TestPettyCashTopup`: 9 tests (creation, source validation, posting, sequences, fiscal lock dates).
+- `TestAccountMoveSync`: 10 tests (sync on draft, cancel, reverse, re-post, multi-company, non-cash filter).
+- **Total Post-Tests**: **63** (71 test executions, 0 failures).
 
-### A. Expense Disbursement Entry (`account.move`, type `entry`)
-Posted automatically when an expense is approved or directly submitted below threshold:
-
-| Line # | Account | Label | Partner | Debit | Credit |
-|---|---|---|---|---|---|
-| 1 | Expense Account (`category.expense_account_id`) | Expense Description | Payee Partner / Employee Contact / None | Amount | 0.00 |
-| 2 | Fund Cash Account (`fund.default_account_id`) | Expense Description | Payee Partner / Employee Contact / None | 0.00 | Amount |
-
-*Example (Expense PCV/2026/00001 for 150.00 USD office supplies):*
-- `Dr` 600095 Office Expenses: 150.00 USD
-- `Cr` 101090 Petty Cash Liquidity: 150.00 USD
-
-### B. Expense Reversal Entry (`account.move`, type `entry`)
-Created when a Manager cancels a posted expense:
-
-| Line # | Account | Label | Debit | Credit |
-|---|---|---|---|---|
-| 1 | Fund Cash Account (`fund.default_account_id`) | Reversal of: PCV/2026/00001 - <Reason> | Amount | 0.00 |
-| 2 | Expense Account (`category.expense_account_id`) | Reversal of: PCV/2026/00001 - <Reason> | 0.00 | Amount |
-
-### C. Fund Top-up Entry (`account.move`, type `entry`)
-Created when a Manager posts a top-up:
-
-| Line # | Account | Label | Debit | Credit |
-|---|---|---|---|---|
-| 1 | Fund Cash Account (`fund.default_account_id`) | Top-up from <Source Name> | Amount | 0.00 |
-| 2 | Source Account (`source.account_id`) | Top-up from <Source Name> | 0.00 | Amount |
-
-*Example (Top-up PCT/2026/00001 for 500.00 USD from Main Bank):*
-- `Dr` 101090 Petty Cash Liquidity: 500.00 USD
-- `Cr` 102000 Main Bank Account: 500.00 USD
-
----
-
-## 4. Test Suite Coverage
-
-| Test Class | Focus Area | Test Count |
-|---|---|---|
-| `TestPettyCashFoundation` | Fund creation, cash journal accounts, custodians, limits, live balance aggregation | 13 |
-| `TestPettyCashVoucher` | Workflow state transitions, thresholds, approvals, segregation of duties, receipt validation, ledger posting, reversal, concurrency lock protection, UI Form tests | 27 |
-| `TestPettyCashTopup` | Top-up creation, source validation, ledger posting, sequence no-gap continuity, fiscal lock dates, Manager/Custodian access controls, UI Form flows | 9 |
-| **Total Tests** | | **49** |
-
----
-
-## 5. Known Limitations
-1. **Tax Engine**: Tax calculations and VAT breakdowns on petty cash expenses are not supported.
-2. **Physical Cash Counts**: Manual count reconciliations and cash drawer disparity tracking are out of scope.
-3. **Dashboards & Custom Reports**: Dedicated QWeb analytical dashboards or executive PDF reports are not included.
-4. **Single Currency**: Funds operate strictly in their journal's primary currency (no multi-currency expense lines).
-5. **Approval Segregation**: Setting an approval threshold mandates approval by a second authorized user (creator cannot approve own expenses).
+## 5. Implementation Notes
+- Scoped `sudo()` calls (3 total): balance aggregation (`petty_cash_fund.py`), voucher ledger posting (`petty_cash_voucher.py`), entry synchronization (`account_move.py`).
+- Out of scope: Tax calculation engine, cash counts, custom PDF reports, multi-currency funds.

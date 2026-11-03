@@ -67,14 +67,18 @@ class TestPettyCashVoucher(PettyCashTestCommon):
             company_ids=[Command.set(cls.company.ids)],
         )
 
+        # Configure company thresholds
+        cls.company.write({
+            'petty_cash_approval_threshold': 100.0,
+            'petty_cash_per_expense_limit': 500.0,
+        })
+
         # Fund
         cls.fund = cls.env['petty.cash.fund'].create({
             'name': 'Main Branch Fund',
             'journal_id': cls.journal.id,
             'custodian_ids': [Command.set([cls.custodian_user.id])],
             'company_id': cls.company.id,
-            'approval_threshold': 100.0,
-            'per_voucher_limit': 500.0,
         })
         cls.fund.action_activate()
 
@@ -326,7 +330,7 @@ class TestPettyCashVoucher(PettyCashTestCommon):
         })
         with self.assertRaises(UserError) as cm:
             voucher_high.action_submit()
-        self.assertIn("exceeds the fund's per-expense limit", str(cm.exception))
+        self.assertIn("per-expense limit", str(cm.exception))
 
     def test_06_payee_types_and_lines_formatting(self):
         """Payee types: partner, employee (work_contact_id), other (no partner on lines, name in label)."""
@@ -402,8 +406,8 @@ class TestPettyCashVoucher(PettyCashTestCommon):
             'payee_type': 'partner',
             'partner_id': self.partner.id,
         })
-        # Remove per_voucher_limit and approval_threshold for this test so it posts on submit
-        self.fund.write({'per_voucher_limit': 0.0, 'approval_threshold': 0.0})
+        # Remove per-expense limit and approval threshold for this test so it posts on submit
+        self.company.write({'petty_cash_per_expense_limit': 0.0, 'petty_cash_approval_threshold': 0.0})
 
         with self.assertRaises(UserError) as cm:
             voucher_big.action_submit()
@@ -978,30 +982,10 @@ class TestPettyCashVoucher(PettyCashTestCommon):
         evaluated_domain = safe_eval(domain_expr, {'company_id': False})
         self.assertEqual(evaluated_domain, [('state', '=', 'active')])
 
-        # Helper to create journals
-        def make_cash_journal(name, code, comp, acc, susp):
-            return self.env['account.journal'].create({
-                'name': name, 'code': code, 'type': 'cash', 'company_id': comp.id,
-                'default_account_id': acc.id,
-                'suspense_account_id': susp.id,
-                'inbound_payment_method_line_ids': [
-                    Command.create({
-                        'payment_method_id': self.env.ref('account.account_payment_method_manual_in').id,
-                        'payment_account_id': acc.id,
-                    }),
-                ],
-                'outbound_payment_method_line_ids': [
-                    Command.create({
-                        'payment_method_id': self.env.ref('account.account_payment_method_manual_out').id,
-                        'payment_account_id': acc.id,
-                    }),
-                ],
-            })
-
         # 3. Setup funds in self.company:
         # Fund 1: self.fund (active, custodian_user in custodian_ids)
         # Fund 2: second active fund for self.custodian_user
-        j2 = make_cash_journal('Cash 2', 'PC25_2', self.company, self.petty_cash_account, self.suspense_account)
+        j2 = self._create_cash_journal('Cash 2', 'PC25_2', self.company, self.petty_cash_account, self.suspense_account)
         fund_2 = self.env['petty.cash.fund'].create({
             'name': 'Active Fund 2',
             'company_id': self.company.id,
@@ -1011,7 +995,7 @@ class TestPettyCashVoucher(PettyCashTestCommon):
         fund_2.action_activate()
 
         # Fund Draft: draft state, custodian_user is custodian
-        jd = make_cash_journal('Cash Draft', 'PC25_D', self.company, self.petty_cash_account, self.suspense_account)
+        jd = self._create_cash_journal('Cash Draft', 'PC25_D', self.company, self.petty_cash_account, self.suspense_account)
         fund_draft = self.env['petty.cash.fund'].create({
             'name': 'Draft Fund',
             'company_id': self.company.id,
@@ -1020,7 +1004,7 @@ class TestPettyCashVoucher(PettyCashTestCommon):
         })
 
         # Fund Closed: closed state, custodian_user is custodian
-        jc = make_cash_journal('Cash Closed', 'PC25_C', self.company, self.petty_cash_account, self.suspense_account)
+        jc = self._create_cash_journal('Cash Closed', 'PC25_C', self.company, self.petty_cash_account, self.suspense_account)
         fund_closed = self.env['petty.cash.fund'].create({
             'name': 'Closed Fund',
             'company_id': self.company.id,
@@ -1031,7 +1015,7 @@ class TestPettyCashVoucher(PettyCashTestCommon):
         fund_closed.action_close()
 
         # Fund Unassigned: active, custodian is ONLY custodian_user_2 (not self.custodian_user)
-        ju = make_cash_journal('Cash Unassigned', 'PC25_U', self.company, self.petty_cash_account, self.suspense_account)
+        ju = self._create_cash_journal('Cash Unassigned', 'PC25_U', self.company, self.petty_cash_account, self.suspense_account)
         fund_unassigned = self.env['petty.cash.fund'].create({
             'name': 'Unassigned Fund',
             'company_id': self.company.id,
@@ -1058,7 +1042,7 @@ class TestPettyCashVoucher(PettyCashTestCommon):
             'account_type': 'asset_cash',
             'company_ids': [Command.link(comp2.id)],
         })
-        j_comp2 = make_cash_journal('Cash Comp2', 'PC25_C2', comp2, comp2_acc, comp2_acc)
+        j_comp2 = self._create_cash_journal('Cash Comp2', 'PC25_C2', comp2, comp2_acc, comp2_acc)
         fund_comp2 = self.env['petty.cash.fund'].create({
             'name': 'Company 2 Fund',
             'company_id': comp2.id,
@@ -1121,7 +1105,7 @@ class TestPettyCashVoucher(PettyCashTestCommon):
 
     def test_26_ui_form_submit_insufficient_balance_shows_both_numbers(self):
         """Case 5: Submitting a voucher when balance is lower than amount displays both formatted numbers."""
-        self.fund.write({'per_voucher_limit': 100000.0, 'approval_threshold': 100000.0})
+        self.company.write({'petty_cash_per_expense_limit': 100000.0, 'petty_cash_approval_threshold': 100000.0})
         self.fund.invalidate_recordset(['balance'])
         current_bal = self.fund.balance
 

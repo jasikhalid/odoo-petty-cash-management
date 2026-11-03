@@ -444,26 +444,7 @@ class TestPettyCashTopup(PettyCashTestCommon):
         with company_id=False for admin, Manager, and custodian.
         """
         # Create second active fund for custodian
-        journal_2 = self.env['account.journal'].create({
-            'name': 'Cash 2 Topup',
-            'code': 'PC2T',
-            'type': 'cash',
-            'company_id': self.company.id,
-            'default_account_id': self.petty_cash_account.id,
-            'suspense_account_id': self.suspense_account.id,
-            'inbound_payment_method_line_ids': [
-                Command.create({
-                    'payment_method_id': self.env.ref('account.account_payment_method_manual_in').id,
-                    'payment_account_id': self.outstanding_receipts_account.id,
-                }),
-            ],
-            'outbound_payment_method_line_ids': [
-                Command.create({
-                    'payment_method_id': self.env.ref('account.account_payment_method_manual_out').id,
-                    'payment_account_id': self.outstanding_payments_account.id,
-                }),
-            ],
-        })
+        journal_2 = self._create_cash_journal('Cash 2 Topup', 'PC2T')
         fund_2 = self.env['petty.cash.fund'].create({
             'name': 'Second Active Fund',
             'company_id': self.company.id,
@@ -473,26 +454,7 @@ class TestPettyCashTopup(PettyCashTestCommon):
         fund_2.action_activate()
 
         # Inactive fund in company 1
-        journal_draft = self.env['account.journal'].create({
-            'name': 'Cash Draft Topup',
-            'code': 'PCDT',
-            'type': 'cash',
-            'company_id': self.company.id,
-            'default_account_id': self.petty_cash_account.id,
-            'suspense_account_id': self.suspense_account.id,
-            'inbound_payment_method_line_ids': [
-                Command.create({
-                    'payment_method_id': self.env.ref('account.account_payment_method_manual_in').id,
-                    'payment_account_id': self.outstanding_receipts_account.id,
-                }),
-            ],
-            'outbound_payment_method_line_ids': [
-                Command.create({
-                    'payment_method_id': self.env.ref('account.account_payment_method_manual_out').id,
-                    'payment_account_id': self.outstanding_payments_account.id,
-                }),
-            ],
-        })
+        journal_draft = self._create_cash_journal('Cash Draft Topup', 'PCDT')
         fund_draft = self.env['petty.cash.fund'].create({
             'name': 'Draft Fund Unselectable',
             'company_id': self.company.id,
@@ -508,26 +470,7 @@ class TestPettyCashTopup(PettyCashTestCommon):
             'account_type': 'asset_cash',
             'company_ids': [Command.link(comp2.id)],
         })
-        journal_comp2 = self.env['account.journal'].create({
-            'name': 'Comp 2 Cash Jnl',
-            'code': 'PC2J',
-            'type': 'cash',
-            'company_id': comp2.id,
-            'default_account_id': comp2_acc.id,
-            'suspense_account_id': comp2_acc.id,
-            'inbound_payment_method_line_ids': [
-                Command.create({
-                    'payment_method_id': self.env.ref('account.account_payment_method_manual_in').id,
-                    'payment_account_id': comp2_acc.id,
-                }),
-            ],
-            'outbound_payment_method_line_ids': [
-                Command.create({
-                    'payment_method_id': self.env.ref('account.account_payment_method_manual_out').id,
-                    'payment_account_id': comp2_acc.id,
-                }),
-            ],
-        })
+        journal_comp2 = self._create_cash_journal('Comp 2 Cash Jnl', 'PC2J', comp2, comp2_acc, comp2_acc)
         custodian_comp2 = new_test_user(
             self.env,
             login='custodian_topup_comp2',

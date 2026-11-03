@@ -123,12 +123,9 @@ class PettyCashTopup(models.Model):
     def default_get(self, fields_list):
         res = super().default_get(fields_list)
         if 'fund_id' in fields_list and not res.get('fund_id'):
-            active_funds = self.env['petty.cash.fund'].search([
-                ('state', '=', 'active'),
-                ('custodian_ids', 'in', [self.env.uid]),
-            ])
-            if len(active_funds) == 1:
-                res['fund_id'] = active_funds.id
+            fund_id = self.env['petty.cash.fund']._get_default_fund_for_user()
+            if fund_id:
+                res['fund_id'] = fund_id
         return res
 
     @api.model_create_multi

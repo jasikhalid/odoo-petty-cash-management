@@ -83,3 +83,33 @@ class PettyCashTestCommon(AccountTestInvoicingCommon):
             company_id=cls.company.id,
             company_ids=[Command.set(cls.company.ids)],
         )
+
+    @classmethod
+    def _create_cash_journal(cls, name='Branch Cash Journal', code='PCJ', company=None, account=None, suspense=None):
+        """Helper to create a fully configured cash journal for tests."""
+        comp = company or cls.company
+        acc = account or cls.petty_cash_account
+        susp = suspense or cls.suspense_account
+        receipt_acc = cls.outstanding_receipts_account.id if comp == cls.company else acc.id
+        payment_acc = cls.outstanding_payments_account.id if comp == cls.company else acc.id
+        return cls.env['account.journal'].create({
+            'name': name,
+            'code': code,
+            'type': 'cash',
+            'company_id': comp.id,
+            'default_account_id': acc.id,
+            'suspense_account_id': susp.id,
+            'inbound_payment_method_line_ids': [
+                Command.create({
+                    'payment_method_id': cls.env.ref('account.account_payment_method_manual_in').id,
+                    'payment_account_id': receipt_acc,
+                }),
+            ],
+            'outbound_payment_method_line_ids': [
+                Command.create({
+                    'payment_method_id': cls.env.ref('account.account_payment_method_manual_out').id,
+                    'payment_account_id': payment_acc,
+                }),
+            ],
+        })
+

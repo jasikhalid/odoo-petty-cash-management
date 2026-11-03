@@ -13,12 +13,6 @@
                             class="btn-primary"
                             invisible="state != 'draft'"
                             groups="petty_cash_management.group_petty_cash_manager"/>
-                    <button name="action_open_new_topup"
-                            string="Top Up"
-                            type="object"
-                            class="btn-primary"
-                            invisible="state != 'active'"
-                            groups="petty_cash_management.group_petty_cash_manager"/>
                     <button name="action_close"
                             string="Close Fund"
                             type="object"
@@ -41,15 +35,6 @@
                                 icon="article">
                             <field name="voucher_count" widget="statinfo" string="Expenses"/>
                         </button>
-                        <button name="action_view_journal_items"
-                                type="object"
-                                class="oe_stat_button"
-                                icon="menu"
-                                groups="account.group_account_readonly">
-                            <div class="o_stat_info">
-                                <span class="o_stat_text">Journal Items</span>
-                            </div>
-                        </button>
                     </div>
                     <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
                     <div class="oe_title">
@@ -59,38 +44,21 @@
                         </h1>
                     </div>
                     <group>
-                        <group string="Fund Details">
+                        <group>
                             <field name="journal_id" readonly="state != 'draft'"/>
+                            <field name="analytic_account_id" groups="analytic.group_analytic_accounting" readonly="state == 'closed'"/>
                             <field name="company_id" readonly="state != 'draft'" groups="base.group_multi_company"/>
                             <field name="currency_id" invisible="1"/>
-                            <field name="custodian_ids" widget="many2many_tags" options="{'no_create': True}" readonly="state == 'closed'"/>
-                            <field name="analytic_account_id" groups="analytic.group_analytic_accounting" readonly="state == 'closed'"/>
                             <field name="active" invisible="1"/>
                         </group>
-                        <group string="Balance &amp; Thresholds">
+                        <group>
+                            <field name="custodian_ids" widget="many2many_tags" options="{'no_create': True}" readonly="state == 'closed'"/>
                             <field name="balance" widget="monetary"/>
-                            <field name="low_balance_alert" readonly="state == 'closed'"/>
-                            <field name="per_voucher_limit" readonly="state == 'closed'"/>
-                            <field name="approval_threshold" readonly="state == 'closed'"/>
                         </group>
                     </group>
-                    <notebook>
-                        <page string="Journal Configuration" name="journal_config">
-                            <group>
-                                <group string="Liquidity &amp; Suspense">
-                                    <field name="default_account_id"/>
-                                    <field name="suspense_account_id"/>
-                                </group>
-                                <group string="Outstanding Accounts">
-                                    <field name="outstanding_receipt_account_id"/>
-                                    <field name="outstanding_payment_account_id"/>
-                                </group>
-                            </group>
-                        </page>
-                        <page string="Notes" name="notes">
-                            <field name="notes" placeholder="Internal notes regarding this petty cash fund..."/>
-                        </page>
-                    </notebook>
+                    <group string="Notes">
+                        <field name="notes" placeholder="Internal notes regarding this petty cash fund..." nolabel="1"/>
+                    </group>
                 </sheet>
                 <chatter/>
             </form>
@@ -104,11 +72,9 @@
         <field name="arch" type="xml">
             <list string="Petty Cash Funds" decoration-muted="state == 'closed'">
                 <field name="name"/>
-                <field name="journal_id"/>
                 <field name="custodian_ids" widget="many2many_tags"/>
-                <field name="company_id" groups="base.group_multi_company"/>
                 <field name="balance" widget="monetary"/>
-                <field name="currency_id"/>
+                <field name="currency_id" column_invisible="True"/>
                 <field name="state" widget="badge"
                        decoration-info="state == 'draft'"
                        decoration-success="state == 'active'"

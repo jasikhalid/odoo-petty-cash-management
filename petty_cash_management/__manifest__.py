@@ -28,6 +28,7 @@ expense disbursement, multi-level approvals, receipt verification, and fund top-
         'views/petty_cash_voucher_views.xml',
         'views/petty_cash_topup_source_views.xml',
         'views/petty_cash_topup_views.xml',
+        'views/res_config_settings_views.xml',
         'views/menus.xml',
     ],
     'installable': True,
